@@ -1,0 +1,114 @@
+import 'dotenv/config.js';
+import request from 'supertest';
+import chai, { expect } from 'chai';
+import chaiuuid from 'chai-uuid';
+import { INITIAL_USER_LOGIN, INITIAL_USER_PASSWORD } from '../../common/constants.js';
+
+chai.use(chaiuuid);
+const zeroImage = `${__dirname}/../__mocks__/zero.jpg`;
+const req = request(process.env.TEST_API_URL);
+let xToken,
+  tokenId;
+
+describe('Common security checks', function () {
+  this.timeout(10000000);
+  before(function () {
+    return new Promise((resolve, reject) => {
+      req
+        .post('/user/login')
+        .set('Accept', 'application/json')
+        .send({ email: INITIAL_USER_LOGIN })
+        .send({ password: INITIAL_USER_PASSWORD })
+        .expect(200)
+        .end((err, res) => {
+          if (err) return reject(err);
+          expect(res.body.token).to.be.a('string');
+          xToken = res.body.token;
+          resolve();
+        });
+    });
+  });
+  after(function () {
+    return new Promise((resolve, reject) => {
+      req
+        .delete('/token/delete')
+        .set('Accept', 'application/json')
+        .send({ token: tokenId })
+        .send({ token_id: tokenId })
+        .expect(200)
+        .end((err, res) => {
+          if (err) return reject(err);
+          expect(res.body.status).to.equal('ok');
+          resolve();
+        });
+    });
+  });
+  it('[GET] request without credentials "401 Unauthorized"', function () {
+    return new Promise((resolve, reject) => {
+      req
+        .get('/tokens')
+        .set('Accept', 'application/json')
+        .expect(401)
+        .end((err, res) => {
+          err ? reject(err) : resolve(res);
+        });
+    });
+  });
+  it('[POST] create token for 1 day ("200 Ok")', function () {
+    return new Promise((resolve, reject) => {
+      req
+        .post('/token/create')
+        .set('Accept', 'application/json')
+        .set('token', xToken)
+        .send({ valid_days: 1 })
+        .expect(201)
+        .end((err, res) => {
+          if (err) return reject(err);
+          expect(res.body.status).to.equal('ok');
+          expect(res.body.token).to.be.an('object');
+          expect(res.body.token.id).to.be.a.uuid('v1');
+          expect(res.body.token.expires).to.be.an('string');
+          tokenId = res.body.token.id;
+          resolve();
+        });
+    });
+  });
+  it('[POST] request with bad json "400 Bad Request"', function () {
+    return new Promise((resolve, reject) => {
+      req
+        .post('/person/list/create')
+        .set('Accept', 'application/json')
+        .set('token', xToken)
+        .field('group_id', 'badId')
+        .attach('image', zeroImage)
+        .expect(400)
+        .end((err, res) => {
+          err ? reject(err) : resolve(res);
+        });
+    });
+  });
+  it('[GET] request with correct token in header "200 Ok"', function () {
+    return new Promise((resolve, reject) => {
+      req
+        .get('/tokens')
+        .set('Accept', 'application/json')
+        .set('token', xToken)
+        .expect(200)
+        .end((err, res) => {
+          err ? reject(err) : resolve(res);
+        });
+    });
+  });
+  it('[GET] request with correct token in POST body "200 Ok"', function () {
+    return new Promise((resolve, reject) => {
+      req
+        .get('/tokens')
+        .set('Accept', 'application/json')
+        .send({ token: tokenId })
+        .expect(200)
+        .end((err, res) => {
+          err ? reject(err) : resolve(res);
+        });
+    });
+  });
+});

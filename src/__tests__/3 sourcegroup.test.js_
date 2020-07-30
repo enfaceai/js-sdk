@@ -1,0 +1,794 @@
+import 'dotenv/config.js';
+import request from 'supertest';
+import faker from 'faker';
+import chai, { expect } from 'chai';
+import chaiuuid from 'chai-uuid';
+import {
+  SOURCE_GROUP_NAME_MIN_LENGTH,
+  SOURCE_GROUP_NAME_MAX_LENGTH,
+  ZERO_UUID,
+  ALERT_MAX_LENGTH,
+} from '../../models/constants.js';
+import { INITIAL_USER_LOGIN, INITIAL_USER_PASSWORD } from '../../common/constants';
+
+chai.use(chaiuuid);
+const req = request(process.env.TEST_API_URL);
+const alert = faker.random.alphaNumeric(ALERT_MAX_LENGTH);
+const alert2 = faker.random.alphaNumeric(ALERT_MAX_LENGTH);
+const listName = faker.random.alphaNumeric(5);
+const listName2 = faker.random.alphaNumeric(5);
+const listNameRenamed = faker.random.alphaNumeric(SOURCE_GROUP_NAME_MAX_LENGTH);
+const nonExistentId = '13814001-1dd2-11b2-b619-5502c27ed19a';
+const created = [];
+let initialCount = 0;
+let xToken;
+
+describe('Source groups check', function () {
+  this.timeout(10000000);
+  before(function () {
+    return new Promise((resolve, reject) => {
+      req
+        .post('/user/login')
+        .set('Accept', 'application/json')
+        .send({ email: INITIAL_USER_LOGIN })
+        .send({ password: INITIAL_USER_PASSWORD })
+        .expect(200)
+        .end((err, res) => {
+          if (err) return reject(err);
+          expect(res.body.token).to.be.a('string');
+          xToken = res.body.token;
+          resolve();
+        });
+    });
+  });
+  describe('Get current groups list', function () {
+    it('[GET] responds correctly with json ("200 Ok")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .get('/source/groups')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .expect(200)
+          .expect('Content-Type', /json/)
+          .end((err, res) => {
+            if (err) return reject(err);
+            // console.log(res.body);
+            // console.log({ person_list_search: res.body.map(item => JSON.stringify(item.person_list_search)) });
+            expect(res.body.length).to.be.least(1);
+            initialCount = res.body.length;
+            resolve();
+          });
+      });
+    });
+  });
+  describe('SourceGroupCreate schema sanity checks', function () {
+    it('[POST] create group without name ("400 Bad Request" - "invalid schema")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/source/group/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+    it('[POST] create group with short name ("400 Bad Request" - "invalid schema")', function () {
+      return new Promise((resolve, reject) => {
+        const name = faker.random.alphaNumeric(SOURCE_GROUP_NAME_MIN_LENGTH - 1);
+        req
+          .post('/source/group/create')
+          .set('Accept', 'application/json')
+          .send({ name })
+          .set('token', xToken)
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+    it('[POST] create group with long name ("400 Bad Request" - "invalid schema")', function () {
+      return new Promise((resolve, reject) => {
+        const name = faker.random.alphaNumeric(SOURCE_GROUP_NAME_MAX_LENGTH + 1);
+        req
+          .post('/source/group/create')
+          .set('Accept', 'application/json')
+          .send({ name })
+          .set('token', xToken)
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+    it('[POST] create group with bad person_list_search type ("400 Bad Request" - "invalid schema")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/source/group/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ name: faker.random.alphaNumeric(SOURCE_GROUP_NAME_MAX_LENGTH) })
+          .send({
+            person_list_search: '',
+          })
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+    it('[POST] create group with bad person_list_search values ("400 Bad Request" - "invalid schema")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/source/group/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ name: faker.random.alphaNumeric(SOURCE_GROUP_NAME_MAX_LENGTH) })
+          .send({
+            person_list_search: [
+              ZERO_UUID,
+              nonExistentId,
+            ],
+          })
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+    it('[POST] create group without.person_list_search id ("400 Bad Request" - "invalid schema")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/source/group/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ name: faker.random.alphaNumeric(SOURCE_GROUP_NAME_MAX_LENGTH) })
+          .send({
+            person_list_search: [
+              {
+                on_found: faker.random.alphaNumeric(ALERT_MAX_LENGTH),
+                on_failed: faker.random.alphaNumeric(ALERT_MAX_LENGTH),
+              },
+            ],
+          })
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+    it('[POST] create group without person_list_search on_found & person_list_search on_failed ("400 Bad Request" - "invalid schema")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/source/group/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ name: faker.random.alphaNumeric(ALERT_MAX_LENGTH) })
+          .send({
+            person_list_search: [
+              { id: ZERO_UUID },
+            ],
+          })
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+    it('[POST] create group without person_list_search on_failed ("400 Bad Request" - "invalid schema")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/source/group/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ name: faker.random.alphaNumeric(ALERT_MAX_LENGTH) })
+          .send({
+            person_list_search: [
+              { id: ZERO_UUID, on_found: faker.random.alphaNumeric(ALERT_MAX_LENGTH) },
+            ],
+          })
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+    it('[POST] create group without person_list_search on_found ("400 Bad Request" - "invalid schema")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/source/group/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ name: faker.random.alphaNumeric(ALERT_MAX_LENGTH) })
+          .send({
+            person_list_search: [
+              { id: ZERO_UUID, on_failed: faker.random.alphaNumeric(ALERT_MAX_LENGTH) },
+            ],
+          })
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+    it('[POST] create group with bad person_list_search on_found type ("400 Bad Request" - "invalid schema")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/source/group/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ name: faker.random.alphaNumeric(ALERT_MAX_LENGTH) })
+          .send({
+            person_list_search: [
+              { id: ZERO_UUID, on_found: 0, on_failed: faker.random.alphaNumeric(ALERT_MAX_LENGTH) },
+            ],
+          })
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+    it('[POST] create group with too long person_list_search on_found ("400 Bad Request" - "invalid schema")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/source/group/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ name: faker.random.alphaNumeric(ALERT_MAX_LENGTH) })
+          .send({
+            person_list_search: [
+              {
+                id: ZERO_UUID,
+                on_found: faker.random.alphaNumeric(ALERT_MAX_LENGTH + 1),
+                on_failed: faker.random.alphaNumeric(ALERT_MAX_LENGTH),
+              },
+            ],
+          })
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+    it('[POST] create group with bad person_list_search on_failed type ("400 Bad Request" - "invalid schema")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/source/group/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ name: faker.random.alphaNumeric(ALERT_MAX_LENGTH) })
+          .send({
+            person_list_search: [
+              {
+                id: ZERO_UUID,
+                on_found: faker.random.alphaNumeric(ALERT_MAX_LENGTH),
+                on_failed: 0,
+              },
+            ],
+          })
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+    it('[POST] create group with too long person_list_search on_failed ("400 Bad Request" - "invalid schema")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/source/group/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ name: faker.random.alphaNumeric(ALERT_MAX_LENGTH) })
+          .send({
+            person_list_search: [
+              {
+                id: ZERO_UUID,
+                on_found: faker.random.alphaNumeric(ALERT_MAX_LENGTH),
+                on_failed: faker.random.alphaNumeric(ALERT_MAX_LENGTH + 1),
+              },
+            ],
+          })
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+    it('[POST] create group with person_list_search id not uuid ("400 Bad Request" - "invalid schema")', function () {
+      return new Promise((resolve, reject) => {
+        const id = '13814001-1dd2-11b2-b619x5502c27ed19a';
+        req
+          .post('/source/group/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ name: faker.random.alphaNumeric(SOURCE_GROUP_NAME_MAX_LENGTH) })
+          .send({
+            person_list_search: [
+              {
+                id,
+                on_found: faker.random.alphaNumeric(ALERT_MAX_LENGTH),
+                on_failed: faker.random.alphaNumeric(ALERT_MAX_LENGTH),
+              },
+            ],
+          })
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+    it('[POST] create group with duplicate person_list_search id ("400 Bad Request" - "invalid schema")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/source/group/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ name: faker.random.alphaNumeric(ALERT_MAX_LENGTH) })
+          .send({
+            person_list_search: [
+              {
+                id: ZERO_UUID,
+                on_found: faker.random.alphaNumeric(ALERT_MAX_LENGTH),
+                on_failed: faker.random.alphaNumeric(ALERT_MAX_LENGTH + 1),
+              },
+              {
+                id: ZERO_UUID,
+                on_found: faker.random.alphaNumeric(ALERT_MAX_LENGTH),
+                on_failed: faker.random.alphaNumeric(ALERT_MAX_LENGTH + 1),
+              },
+            ],
+          })
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+  });
+  describe('Source group create', function () {
+    it('[POST] create group with non existent person_list_search id ("400 Bad Request" - "list id \'uuid\' does not found")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/source/group/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ name: faker.random.alphaNumeric(SOURCE_GROUP_NAME_MAX_LENGTH) })
+          .send({
+            person_list_search: [
+              {
+                id: nonExistentId,
+                on_found: faker.random.alphaNumeric(ALERT_MAX_LENGTH),
+                on_failed: faker.random.alphaNumeric(ALERT_MAX_LENGTH),
+              },
+            ],
+          })
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal(`list id '${nonExistentId}' does not found`);
+            resolve();
+          });
+      });
+    });
+    it('[POST] create group with duplicate name ("400 Bad Request" - "group with this name is already exists")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/source/group/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ name: 'Default group' })
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('group with this name is already exists');
+            resolve();
+          });
+      });
+    });
+    it('[POST] create group without person_list_search ("201 Created" - "group_id: {uuid}")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/source/group/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ name: listName })
+          .expect(201)
+          .end((err, res) => {
+            if (err) return reject(err);
+            // console.log(res.body);
+            // console.log({ person_list_search: res.body.map(item => JSON.stringify(item.person_list_search)) });
+            expect(res.body.status).to.equal('ok');
+            expect(res.body.message).to.equal('source group created');
+            expect(res.body.group_id).to.be.a.uuid('v1');
+            created.push(res.body.group_id);
+            resolve();
+          });
+      });
+    });
+    it('[POST] create group with person_list_search ("201 Created" - "group_id: {uuid}")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/source/group/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ name: listName2 })
+          .send({
+            person_list_search: [
+              { id: ZERO_UUID, on_found: alert, on_failed: alert },
+            ],
+          })
+          .expect(201)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('ok');
+            expect(res.body.message).to.equal('source group created');
+            expect(res.body.group_id).to.be.a.uuid('v1');
+            created.push(res.body.group_id);
+            resolve();
+          });
+      });
+    });
+    it('[GET] get all groups and check result ("200 Ok")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .get('/source/groups')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .expect(200)
+          .expect('Content-Type', /json/)
+          .end((err, res) => {
+            if (err) return reject(err);
+            // console.log({ body: JSON.stringify(res.body) });
+            // console.log({ listName2, last: created[created.length - 1] });
+            const newItem = res.body.find(item => item.group_id === created[created.length - 1]);
+            expect(newItem.name).to.be.equal(listName2);
+            // console.log({ NEW_ITEM: JSON.stringify(newItem) });
+            expect(newItem.person_list_search).to.have.length(1);
+            expect(newItem.person_list_search[0].id).to.be.equal(ZERO_UUID);
+            expect(newItem.person_list_search[0].on_found).to.be.equal(alert);
+            expect(newItem.person_list_search[0].on_failed).to.be.equal(alert);
+            resolve();
+          });
+      });
+    });
+  });
+  describe('Source group update', function () {
+    it('[PUT] update group with unknown id ("200 Ok" - "source group with this id does not found")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .put('/source/group/update')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ group_id: nonExistentId })
+          .send({ name: faker.random.alphaNumeric(SOURCE_GROUP_NAME_MAX_LENGTH) })
+          .expect(200)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('source group with this id does not found');
+            resolve();
+          });
+      });
+    });
+    it('[PUT] update group with duplicate name ("200 Ok" - "group with this name is already exists")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .put('/source/group/update')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ group_id: created[0] })
+          .send({ name: 'Default group' })
+          .expect(200)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('group with this name is already exists');
+            resolve();
+          });
+      });
+    });
+    it('[PUT] update group name ("200 Ok")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .put('/source/group/update')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ group_id: created[0] })
+          .send({ name: listNameRenamed })
+          .expect(200)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('ok');
+            resolve();
+          });
+      });
+    });
+    it('[PUT] update person_list_search ("200 Ok")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .put('/source/group/update')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ group_id: created[0] })
+          .send({
+            person_list_search: [
+              {
+                id: ZERO_UUID,
+                on_found: alert2,
+                on_failed: alert2,
+              },
+            ],
+          })
+          .expect(200)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('ok');
+            resolve();
+          });
+      });
+    });
+    it('[GET] get all groups and check result ("200 Ok")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .get('/source/groups')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .expect(200)
+          .expect('Content-Type', /json/)
+          .end((err, res) => {
+            if (err) return reject(err);
+            const newItem = res.body.find(item => item.group_id === created[0]);
+            expect(newItem.name).to.be.equal(listNameRenamed);
+            expect(newItem.person_list_search).to.have.length(1);
+            expect(newItem.person_list_search[0].id).to.be.equal(ZERO_UUID);
+            expect(newItem.person_list_search[0].on_found).to.be.equal(alert2);
+            expect(newItem.person_list_search[0].on_failed).to.be.equal(alert2);
+            resolve();
+          });
+      });
+    });
+  });
+  describe('SourceGroupDelete schema sanity checks', function () {
+    it('[DELETE] delete group without id ("400 Bad Request" - "invalid schema")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .delete('/source/group/delete')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+    it('[DELETE] delete group with wrong id type ("400 Bad Request" - "invalid schema")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .delete('/source/group/delete')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ group_id: 0 })
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+    it('[DELETE] delete group with id not uuid ("400 Bad Request" - "invalid schema")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .delete('/source/group/delete')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ group_id: 'bad_id' })
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+    it('[DELETE] delete group with [id] not uuid ("400 Bad Request" - "invalid schema")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .delete('/source/group/delete')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ group_id: ['bad_id'] })
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+    it('[DELETE] delete group with empty id ("400 Bad Request" - "invalid schema")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .delete('/source/group/delete')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ group_id: '' })
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+    it('[DELETE] delete group with undefined ids ("400 Bad Request" - "invalid schema")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .delete('/source/group/delete')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ group_id: [] })
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+  });
+  describe('Source group delete', function () {
+    it('[DELETE] delete group with non existent id ("200 Ok" - "id or [ids] must exist")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .delete('/source/group/delete')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ group_id: nonExistentId })
+          .expect(200)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('id or [ids] must exist');
+            resolve();
+          });
+      });
+    });
+    it('[DELETE] delete group with non existent [id] ("200 Ok" - "id or [ids] must exist")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .delete('/source/group/delete')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ group_id: [nonExistentId] })
+          .expect(200)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('id or [ids] must exist');
+            resolve();
+          });
+      });
+    });
+    it('[DELETE] delete default list ("200 Ok" - "can not delete default group")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .delete('/source/group/delete')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ group_id: ZERO_UUID })
+          .expect(200)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('can not delete default group');
+            resolve();
+          });
+      });
+    });
+    it('[DELETE] delete list by id ("200 Ok")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .delete('/source/group/delete')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ group_id: created.pop() })
+          .expect(200)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('ok');
+            resolve();
+          });
+      });
+    });
+    it('[DELETE] delete list by [id] ("200 Ok")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .delete('/source/group/delete')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ group_id: [created.pop()] })
+          .expect(200)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('ok');
+            resolve();
+          });
+      });
+    });
+  });
+  describe('Get groups count after all', function () {
+    it('[GET] responds correctly with json ("200 Ok")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .get('/source/groups')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .expect(200)
+          .expect('Content-Type', /json/)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.length).to.be.equal(initialCount);
+            resolve();
+          });
+      });
+    });
+  });
+});

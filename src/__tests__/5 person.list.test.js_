@@ -1,0 +1,368 @@
+import 'dotenv/config.js';
+import request from 'supertest';
+import faker from 'faker';
+import chai, { expect } from 'chai';
+import chaiuuid from 'chai-uuid';
+import chaimatch from 'chai-match';
+import { PERSON_LIST_NAME_MIN_LENGTH, PERSON_LIST_NAME_MAX_LENGTH, ZERO_UUID } from '../../models/constants.js';
+import { INITIAL_USER_LOGIN, INITIAL_USER_PASSWORD } from '../../common/constants';
+
+chai.use(chaimatch);
+chai.use(chaiuuid);
+const req = request(process.env.TEST_API_URL);
+const listName1 = faker.random.alphaNumeric(PERSON_LIST_NAME_MAX_LENGTH);
+const listName2 = faker.random.alphaNumeric(PERSON_LIST_NAME_MAX_LENGTH);
+const nonExistentId = '13814001-1dd2-11b2-b619-5502c27ed19a';
+const created = [];
+let xToken;
+
+describe('Person list operations', function () {
+  this.timeout(10000000);
+  before(function () {
+    return new Promise((resolve, reject) => {
+      req
+        .post('/user/login')
+        .set('Accept', 'application/json')
+        .send({ email: INITIAL_USER_LOGIN })
+        .send({ password: INITIAL_USER_PASSWORD })
+        .expect(200)
+        .end((err, res) => {
+          if (err) return reject(err);
+          expect(res.body.token).to.be.a('string');
+          xToken = res.body.token;
+          resolve();
+        });
+    });
+  });
+  describe('View current lists with id, name and persons count', function () {
+    it('[GET] responds correctly with json', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .get('/person/lists')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .expect(200)
+          .expect('Content-Type', /json/)
+          .end((err, res) => {
+            // console.log(res.body);
+            err ? reject(err) : resolve(res);
+          });
+      });
+    });
+  });
+  describe('Persons list create', function () {
+    it('[POST] create new list without name (should return "400 Bad Request" - "bad list name")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/person/list/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('bad list name');
+            resolve();
+          });
+      });
+    });
+    it('[POST] create new list with too short name (should return "400 Bad Request" - "bad list name")', function () {
+      return new Promise((resolve, reject) => {
+        const name = faker.random.alphaNumeric(PERSON_LIST_NAME_MIN_LENGTH - 1);
+        req
+          .post('/person/list/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ name })
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('bad list name');
+            resolve();
+          });
+      });
+    });
+    it('[POST] create new list with too long name (should return "400 Bad Request" - "bad list name")', function () {
+      return new Promise((resolve, reject) => {
+        const name = faker.random.alphaNumeric(PERSON_LIST_NAME_MAX_LENGTH + 1);
+        req
+          .post('/person/list/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ name })
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('bad list name');
+            resolve();
+          });
+      });
+    });
+    it('[POST] create new list with name (should return "201 Created" with new list id)', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/person/list/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ name: listName1 })
+          .expect(201)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('ok');
+            expect(res.body.list_id).to.be.a.uuid('v1');
+            created.push(res.body.list_id);
+            resolve();
+          });
+      });
+    });
+    it('[POST] create new list with duplicate name (should return "400 Bad Request" - "list with this name is already exists")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/person/list/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ name: listName1 })
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            // console.log({ res: res.body });
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('list with this name is already exists');
+            resolve();
+          });
+      });
+    });
+    it('[POST] create new list with another name (should return "201 Created" with new list id)', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/person/list/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ name: listName2 })
+          .expect(201)
+          .end((err, res) => {
+            if (err) return reject(err);
+            console.log(res.body);
+            expect(res.body.status).to.equal('ok');
+            expect(res.body.list_id).to.be.a.uuid('v1');
+            created.push(res.body.list_id);
+            resolve();
+          });
+      });
+    });
+  });
+  describe('Persons list update', function () {
+    it('[PUT] update list name with bad id (should return "400 Bad Request" - "bad list id")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .put('/person/list/update')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('bad list id');
+            resolve();
+          });
+      });
+    });
+    it('[PUT] update list name with non existent id (should return "200 Ok" - "list with this id does not found")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .put('/person/list/update')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({
+            id: '22e311f0-75d2-11ea-a82b-0556bc9e11ae',
+            name: 'new_name',
+          })
+          .expect(200)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('list with this id does not found');
+            resolve();
+          });
+      });
+    });
+    it('[PUT] update default list name (should return "200 Ok" - "can not rename default list")', function () {
+      return new Promise((resolve, reject) => {
+        const name = 'new_name';
+        req
+          .put('/person/list/update')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ id: ZERO_UUID, name })
+          .expect(200)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('can not rename default list');
+            resolve();
+          });
+      });
+    });
+    it('[PUT] update list name (should return "200 Ok")', function () {
+      return new Promise((resolve, reject) => {
+        const name = 'new_name';
+        req
+          .put('/person/list/update')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ id: created[1], name })
+          .expect(200)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('ok');
+            resolve();
+          });
+      });
+    });
+  });
+  describe('Persons list delete', function () {
+    it('[DELETE] delete list without name & id (should return "400 Bad Request" - "bad list id")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .delete('/person/list/delete')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('bad list id');
+            resolve();
+          });
+      });
+    });
+    it('[DELETE] delete list with bad name (should return "400 Bad Request" - "bad list name")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .delete('/person/list/delete')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ name: '' })
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('bad list name');
+            resolve();
+          });
+      });
+    });
+    it('[DELETE] delete list with empty id (should return "400 Bad Request" - "bad list id")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .delete('/person/list/delete')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ id: '' })
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('bad list id');
+            resolve();
+          });
+      });
+    });
+    it('[DELETE] delete list with bad id (should return "400 Bad Request" - "bad list id")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .delete('/person/list/delete')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ id: 'bad_id' })
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('bad list id');
+            resolve();
+          });
+      });
+    });
+    it('[DELETE] delete list with non existent name (should return "400 Bad Request" - "list with this name does not found")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .delete('/person/list/delete')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ name: 'non_existent_name' })
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('list with this name does not found');
+            resolve();
+          });
+      });
+    });
+    it('[DELETE] delete list with non existent id (should return "400 Bad Request" - "list with this id does not found")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .delete('/person/list/delete')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ list_id: nonExistentId })
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('list with this id does not found');
+            resolve();
+          });
+      });
+    });
+    it('[DELETE] delete default list (should return "400 Bad Request" = "can not delete default list")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .delete('/person/list/delete')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ list_id: ZERO_UUID })
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('can not delete default list');
+            resolve();
+          });
+      });
+    });
+    it('[DELETE] delete list by id (should return "200 Ok")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .delete('/person/list/delete')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ list_id: created[1] })
+          .expect(200)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('ok');
+            resolve();
+          });
+      });
+    });
+    it('[DELETE] delete list by name (should return "200 Ok")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .delete('/person/list/delete')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ name: listName1 })
+          .expect(200)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('ok');
+            resolve();
+          });
+      });
+    });
+  });
+});

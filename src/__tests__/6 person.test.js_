@@ -1,0 +1,1293 @@
+import 'dotenv/config.js';
+import request from 'supertest';
+import faker from 'faker';
+import chai, { expect } from 'chai';
+import chaiuuid from 'chai-uuid';
+import chaimatch from 'chai-match';
+import { ZERO_UUID, PERSON_FIELD_MAX_LENGTH } from '../../models/constants.js';
+import { INITIAL_USER_LOGIN, INITIAL_USER_PASSWORD } from '../../common/constants.js';
+import { nextStep } from '../../common/helpers.js';
+import { counter as counterHandler } from '../../handlers';
+import { models } from '../../models';
+import { personResultSchema, personSchema } from './schema/index.js';
+
+chai.use(chaimatch);
+chai.use(chaiuuid);
+const req = request(process.env.TEST_API_URL);
+const nonExistentId = '13814001-1dd2-11b2-b619-5502c27ed19a';
+const zeroImage = `${__dirname}/../__mocks__/zero.jpg`;
+const useruuid = models.timeuuidFromString(ZERO_UUID);
+const created = {};
+const hnsw = false;
+const fieldsUpdate = ['field1', 'field2'];
+let counter,
+  xToken,
+  tempSourceId,
+  tempPersonListId,
+  tempSourceGroupId;
+const tempPersonListName = `test list ${faker.random.alphaNumeric(5)}`;
+const tempSourceGroupName = `source group ${faker.random.alphaNumeric(5)}`;
+const tempSourceName = `source ${faker.random.alphaNumeric(5)}`;
+
+const processResults = results => {
+  results.forEach(item => {
+    item.forEach(result => {
+      // console.log({ result });
+      const schemaError = personResultSchema.validate(result);
+      // console.log({ schemaError });
+      expect(schemaError).to.be.an('undefined');
+      created[result.list_id] || (created[result.list_id] = []);
+      created[result.list_id].push(result.person_id);
+    });
+  });
+  // console.log({ created });
+};
+
+describe('Person operations', function () {
+  this.timeout(10000000);
+  before(function () {
+    return new Promise((resolve, reject) => {
+      req
+        .post('/user/login')
+        .set('Accept', 'application/json')
+        .send({ email: INITIAL_USER_LOGIN })
+        .send({ password: INITIAL_USER_PASSWORD })
+        .expect(200)
+        .end((err, res) => {
+          if (err) return reject(err);
+          expect(res.body.token).to.be.a('string');
+          xToken = res.body.token;
+          resolve();
+        });
+    });
+  });
+  describe('Temporary mocks', function () {
+    it('[POST] create temporary persons list ("201 Created")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/person/list/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ name: tempPersonListName })
+          .expect(201)
+          .end((err, res) => {
+            if (err) return reject(err);
+            // console.log({ res: res.body });
+            expect(res.body.status).to.equal('ok');
+            expect(res.body.list_id).to.be.a.uuid('v1');
+            tempPersonListId = res.body.list_id;
+            resolve();
+          });
+      });
+    });
+    it('[POST] create temporary source group ("201 Created" - "source group created")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/source/group/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ name: tempSourceGroupName })
+          .expect(201)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('ok');
+            expect(res.body.message).to.equal('source group created');
+            expect(res.body.group_id).to.be.a.uuid('v1');
+            tempSourceGroupId = res.body.group_id;
+            resolve();
+          });
+      });
+    });
+    it('[POST] create temporary source ("201 Created" - "source created")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/source/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ group_id: tempSourceGroupId })
+          .send({ name: tempSourceName })
+          .expect(201)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('ok');
+            expect(res.body.message).to.equal('source created');
+            expect(res.body.source_id).to.be.a.uuid('v1');
+            tempSourceId = res.body.source_id;
+            resolve();
+          });
+      });
+    });
+  });
+  describe('Person schema sanity checks', function () {
+    it('[POST] no person_id ("400 Bad Request" - "invalid schema")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/person')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .expect(400)
+          .end((err, res) => {
+            // console.log({ body: JSON.stringify(res.body) });
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+    it('[POST] bad person_id type ("400 Bad Request" - "invalid schema")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/person')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ person_id: 0 })
+          .expect(400)
+          .end((err, res) => {
+            // console.log({ body: JSON.stringify(res.body) });
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+    it('[POST] bad list_id type ("400 Bad Request" - "invalid schema")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/person')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ person_id: nonExistentId })
+          .send({ list_id: 0 })
+          .expect(400)
+          .end((err, res) => {
+            // console.log({ body: JSON.stringify(res.body) });
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+  });
+  describe('PersonCreate schema sanity checks', function () {
+    it('[POST] no files attached ("400 Bad Request" - "no image attached")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/person/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('no image attached');
+            resolve();
+          });
+      });
+    });
+    it('[POST] unexpected field ("400 Bad Request" - "unexpected field")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/person/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .attach('unexpected_field', zeroImage)
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('unexpected field');
+            resolve();
+          });
+      });
+    });
+    it('[POST] too much images ("400 Bad Request" - "unexpected field")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/person/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .attach('image', zeroImage)
+          .attach('image', zeroImage)
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            // console.log({ body: res.body });
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('unexpected field');
+            resolve();
+          });
+      });
+    });
+    it('[POST] bad list_id type ("400 Bad Request" - "invalid schema")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/person/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .field('list_id', 0)
+          .attach('image', zeroImage)
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+    it('[POST] bad list_id ("400 Bad Request" - "invalid schema")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/person/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .field('list_id', 'badId')
+          .attach('image', zeroImage)
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+    it('[POST] bad feature_check type ("400 Bad Request" - "invalid schema")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/person/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .field('list_id', nonExistentId)
+          .field({ feature_check: '' })
+          .attach('image', zeroImage)
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+    it('[POST] bad feature_check values ("400 Bad Request" - "invalid schema")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/person/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .field('list_id', nonExistentId)
+          .field({ feature_check: ['unknown'] })
+          .attach('image', zeroImage)
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+    it('[POST] bad new_person_threshold type ("400 Bad Request" - "invalid schema")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/person/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .field('list_id', nonExistentId)
+          .field({ new_person_threshold: 'str' })
+          .attach('image', zeroImage)
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+    it('[POST] bad new_person_threshold value ("400 Bad Request" - "invalid schema")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/person/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .field('list_id', nonExistentId)
+          .field({ new_person_threshold: -13 })
+          .attach('image', zeroImage)
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+    it('[POST] bad new_person_square_min type ("400 Bad Request" - "invalid schema")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/person/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .field('list_id', nonExistentId)
+          .field({ new_person_square_min: 'str' })
+          .attach('image', zeroImage)
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+    it('[POST] bad new_person_square_min value ("400 Bad Request" - "invalid schema")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/person/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .field('list_id', nonExistentId)
+          .field({ new_person_square_min: -13 })
+          .attach('image', zeroImage)
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+    it('[POST] bad new_person_yaw_max type ("400 Bad Request" - "invalid schema")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/person/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .field('list_id', nonExistentId)
+          .field({ new_person_yaw_max: 'str' })
+          .attach('image', zeroImage)
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+    it('[POST] bad new_person_yaw_max value ("400 Bad Request" - "invalid schema")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/person/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .field('list_id', nonExistentId)
+          .field({ new_person_yaw_max: -13 })
+          .attach('image', zeroImage)
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+    it('[POST] bad multi type ("400 Bad Request" - "invalid schema")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/person/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .field('list_id', nonExistentId)
+          .field({ multi: 'str' })
+          .attach('image', zeroImage)
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+    it('[POST] bad bbox type ("400 Bad Request" - "invalid schema")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/person/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .field('list_id', ZERO_UUID)
+          .field('bbox', 0)
+          .attach('image', zeroImage)
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+    it('[POST] bad fields values ("400 Bad Request" - "invalid schema")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/person/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .field('list_id', nonExistentId)
+          .field({
+            fields: [
+              faker.random.alphaNumeric(PERSON_FIELD_MAX_LENGTH + 1),
+              faker.random.alphaNumeric(PERSON_FIELD_MAX_LENGTH + 1),
+            ],
+          })
+          .attach('image', zeroImage)
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+    it('[POST] non existent list_id ("400 Bad Request" - "list with this id does not exists")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/person/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .field('list_id', nonExistentId)
+          .attach('image', zeroImage)
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            // console.log({ body: res.body });
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('list with this id does not exists');
+            resolve();
+          });
+      });
+    });
+  });
+  describe('Person create', function () {
+    before(async function () {
+      const listuuid = models.timeuuidFromString(tempPersonListId);
+      // console.log('CURRENT COUNTER', { useruuid, listuuid });
+      counter = await counterHandler({
+        prefix: 'PersonByList',
+        useruuid,
+        listuuid,
+        frequency: 'total',
+        group : { listuuid  },
+      });
+      counter = counter.counter[0].value;
+      // console.log('CURRENT COUNTER', { counter:this.counter });
+    });
+    it('[POST] bad image format ("200 Ok" - "image format is unknown")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/person/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .attach('image', `${__dirname}/../__mocks__/bad_format.jpg`)
+          .field('list_id', tempPersonListId)
+          .expect(200)
+          .end((err, res) => {
+            // console.log(res.body);
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('ok');
+            expect(res.body.message).to.equal('image format is unknown');
+            expect(res.body.faces_total).to.equal(0);
+            resolve();
+          });
+      });
+    });
+    it('[POST] too small image ("200 Ok" - "image is too small")', function () { // error
+      return new Promise((resolve, reject) => {
+        req
+          .post('/person/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .field('list_id', tempPersonListId)
+          .attach('image', `${__dirname}/../__mocks__/too_small.jpg`)
+          .expect(200)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('ok');
+            expect(res.body.message).to.equal('image is too small');
+            expect(res.body.faces_total).to.equal(0);
+            resolve();
+          });
+      });
+    });
+    it('[POST] image without faces ("200 Ok" - "no faces found")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/person/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .field('list_id', tempPersonListId)
+          .attach('image', `${__dirname}/../__mocks__/no_face.jpg`)
+          .expect(200)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('ok');
+            expect(res.body.message).to.equal('no faces found');
+            expect(res.body.faces_total).to.equal(0);
+            resolve();
+          });
+      });
+    });
+    it('[POST] image with 6 small faces ("200 Ok" - "6 faces detected, but they are too small")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/person/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .field('list_id', tempPersonListId)
+          .attach('image', `${__dirname}/../__mocks__/6_small_faces.jpg`)
+          .expect(200)
+          .end((err, res) => {
+            if (err) return reject(err);
+            // console.log({ body: JSON.stringify(res.body, null, '  ') });
+            expect(res.body.status).to.equal('ok');
+            expect(res.body.message).to.equal('6 faces detected, but they are too small');
+            expect(res.body.faces_total).to.equal(6);
+            expect(res.body.persons_updated).to.have.length(0);
+            expect(res.body.persons_new).to.have.length(0);
+            expect(res.body.matches).to.have.length(0);
+            resolve();
+          });
+      });
+    });
+    it('[POST] 1 face on image with unacceptable params [new_person_square_min: 224, new_person_yaw_max: 30] ("200 Ok" - "1 face(s) successfully processed")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/person/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          // .field('token', '4a57ee90-80a4-11ea-bde2-f6e9a597d48a')
+          // .field('token', '105b3040-80bc-11ea-a50f-267c5720c589')
+          .field('list_id', tempPersonListId)
+          // .field('fields', ['name', 'name'])
+          // .field('multi', true)
+          // .field({ feature_check: 'age' })
+          // .field('new_person_threshold', '95')
+          .field('new_person_square_min', '224')
+          .field('new_person_yaw_max', '30')
+          .attach('image', `${__dirname}/../__mocks__/1_face.jpg`)
+          .expect(200)
+          .end((err, res) => {
+            if (err) return reject(err);
+            // console.log({ body: JSON.stringify(res.body, null, '  '), matchesLength: res.body.matches.length });
+            expect(res.body.status).to.equal('ok');
+            expect(res.body.message).to.equal('1 face(s) successfully processed');
+            expect(res.body.faces_total).to.equal(1);
+            expect(res.body.persons_updated).to.have.length(0);
+            expect(res.body.persons_new).to.have.length(0);
+            expect(res.body.matches).to.have.length(0);
+            processResults(res.body.persons_new);
+            resolve();
+          });
+      });
+    });
+    it('[POST] 1 face on image with acceptable params [new_person_square_min: default, new_person_yaw_max: default] ("201 Created" - "1 face(s) successfully processed")', function () {
+      return nextStep((resolve, reject) => {
+        req
+          .post('/person/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .field('group_id', tempSourceGroupId)
+          .field('source_id', tempSourceId)
+          .field('list_id', tempPersonListId)
+          .field('hnsw', hnsw)
+          .attach('image', `${__dirname}/../__mocks__/1_face.jpg`)
+          .expect(201)
+          .end((err, res) => {
+            if (err) return reject(err);
+            // console.log({ body: JSON.stringify(res.body) });
+            expect(res.body.status).to.equal('ok');
+            expect(res.body.message).to.equal('1 face(s) successfully processed');
+            expect(res.body.faces_total).to.equal(1);
+            expect(res.body.persons_updated).to.have.length(0);
+            expect(res.body.persons_new).to.have.length(1);
+            expect(res.body.matches).to.have.length(0);
+            processResults(res.body.persons_new);
+            resolve();
+          });
+      });
+    });
+    it('[POST] 1 duplicate face on image [new_person_square_min: default, new_person_yaw_max: default] ("200 Ok" - "1 face(s) successfully processed")', function () {
+      return nextStep((resolve, reject) => {
+        req
+          .post('/person/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .field('list_id', tempPersonListId)
+          .field('hnsw', hnsw)
+          .attach('image', `${__dirname}/../__mocks__/1_face.jpg`)
+          .expect(200)
+          .end((err, res) => {
+            if (err) return reject(err);
+            // console.log({ body: JSON.stringify(res.body) });
+            expect(res.body.status).to.equal('ok');
+            expect(res.body.message).to.equal('1 face(s) successfully processed');
+            expect(res.body.faces_total).to.equal(1);
+            expect(res.body.persons_updated).to.have.length(1);
+            expect(res.body.persons_new).to.have.length(0);
+            expect(res.body.matches).to.have.length(1);
+            processResults(res.body.persons_new);
+            resolve();
+          });
+      });
+    });
+    it('[POST] with 2 faces on image [new_person_square_min: default, new_person_yaw_max: default, multi: default] ("201 Created" - "1 face(s) successfully processed")', function () {
+      return nextStep((resolve, reject) => {
+        req
+          .post('/person/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .field('list_id', tempPersonListId)
+          .field('hnsw', hnsw)
+          .attach('image', `${__dirname}/../__mocks__/2_faces.jpg`)
+          .expect(201)
+          .end((err, res) => {
+            if (err) return reject(err);
+            // console.log({ body: JSON.stringify(res.body) });
+            expect(res.body.status).to.equal('ok');
+            expect(res.body.message).to.equal('1 face(s) successfully processed');
+            expect(res.body.faces_total).to.equal(2);
+            expect(res.body.persons_updated).to.have.length(0);
+            expect(res.body.persons_new).to.have.length(1);
+            expect(res.body.matches).to.have.length(0);
+            processResults(res.body.persons_new);
+            resolve();
+          });
+      });
+    });
+    it('[POST] with 2 faces on image [new_person_square_min: 50, new_person_yaw_max: 80, multi: true] ("201 Created" - "2 face(s) successfully processed")', function () {
+      return nextStep((resolve, reject) => {
+        req
+          .post('/person/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .field('list_id', tempPersonListId)
+          .field('multi', true)
+          .field('new_person_square_min', '50')
+          .field('new_person_yaw_max', '80')
+          .field('hnsw', hnsw)
+          .attach('image', `${__dirname}/../__mocks__/2_faces.jpg`)
+          .expect(201)
+          .end((err, res) => {
+            if (err) return reject(err);
+            // console.log({ body: JSON.stringify(res.body) });
+            expect(res.body.status).to.equal('ok');
+            expect(res.body.message).to.equal('2 face(s) successfully processed');
+            expect(res.body.persons_updated).to.have.length(1);
+            expect(res.body.persons_new).to.have.length(1);
+            expect(res.body.faces_total).to.equal(2);
+            expect(res.body.matches).to.have.length(1);
+            processResults(res.body.persons_new);
+            resolve();
+          });
+      });
+    });
+    it('[POST] with 1 faces on image (size < 112) [w:45, h:54, yaw:-6, new_person_square_min: 112, new_person_yaw_max: 80] ("200 Ok" - "1 face(s) successfully processed")', function () {
+      return nextStep((resolve, reject) => {
+        req
+          .post('/person/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .field('list_id', tempPersonListId)
+          .field('multi', true)
+          .field('new_person_square_min', '112')
+          .field('new_person_yaw_max', '80')
+          .field('hnsw', hnsw)
+          .attach('image', `${__dirname}/../__mocks__/1_face_w45_h54_yaw-6_pitch-11.jpg`)
+          .expect(200)
+          .end((err, res) => {
+            if (err) return reject(err);
+            // console.log({ body: JSON.stringify(res.body) });
+            expect(res.body.status).to.equal('ok');
+            expect(res.body.message).to.equal('1 face(s) successfully processed');
+            expect(res.body.faces_total).to.equal(1);
+            expect(res.body.persons_updated).to.have.length(0);
+            expect(res.body.persons_new).to.have.length(0);
+            expect(res.body.matches).to.have.length(0);
+            processResults(res.body.persons_new);
+            resolve();
+          });
+      });
+    });
+    it('[POST] with 1 faces on image (yaw > 5) [w:45, h:54, yaw:-6, new_person_square_min: 50, new_person_yaw_max: 5] ("200 Ok" - "1 face(s) successfully processed")', function () {
+      return nextStep((resolve, reject) => {
+        req
+          .post('/person/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .field('list_id', tempPersonListId)
+          .field('multi', true)
+          .field('new_person_square_min', 50)
+          .field('new_person_yaw_max', 5)
+          .field('hnsw', hnsw)
+          .attach('image', `${__dirname}/../__mocks__/1_face_w45_h54_yaw-6_pitch-11.jpg`)
+          .expect(200)
+          .end((err, res) => {
+            if (err) return reject(err);
+            // console.log({ body: JSON.stringify(res.body) });
+            expect(res.body.status).to.equal('ok');
+            expect(res.body.message).to.equal('1 face(s) successfully processed');
+            expect(res.body.faces_total).to.equal(1);
+            expect(res.body.persons_updated).to.have.length(0);
+            expect(res.body.persons_new).to.have.length(0);
+            expect(res.body.matches).to.have.length(0);
+            processResults(res.body.persons_new);
+            resolve();
+          });
+      });
+    });
+    it('[POST] with 1 faces on image [w:45, h:54, yaw:-6, new_person_square_min: 50, new_person_yaw_max: 30] ("201 Created" - "1 face(s) successfully processed")', function () {
+      return nextStep((resolve, reject) => {
+        req
+          .post('/person/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .field('list_id', tempPersonListId)
+          .field('multi', true)
+          .field('new_person_square_min', '50')
+          .field('new_person_yaw_max', '30')
+          .field('hnsw', hnsw)
+          .attach('image', `${__dirname}/../__mocks__/1_face_w45_h54_yaw-6_pitch-11.jpg`)
+          .expect(201)
+          .end((err, res) => {
+            if (err) return reject(err);
+            // console.log({ body: JSON.stringify(res.body) });
+            expect(res.body.status).to.equal('ok');
+            expect(res.body.message).to.equal('1 face(s) successfully processed');
+            expect(res.body.faces_total).to.equal(1);
+            expect(res.body.persons_updated).to.have.length(0);
+            expect(res.body.persons_new).to.have.length(1);
+            expect(res.body.matches).to.have.length(0);
+            processResults(res.body.persons_new);
+            resolve();
+          });
+      });
+    });
+    it('[POST] with 6 faces on image (6 small) [new_person_square_min: default, new_person_yaw_max: default, multi: true] ("201 Ok" - "5 face(s) successfully processed")', function () {
+      return nextStep((resolve, reject) => {
+        req
+          .post('/person/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .field('group_id', tempSourceGroupId)
+          .field('source_id', tempSourceId)
+          .field('list_id', tempPersonListId)
+          .field('multi', true)
+          .field('hnsw', hnsw)
+          .attach('image', `${__dirname}/../__mocks__/6_faces_1_small.jpg`)
+          .expect(200)
+          .end((err, res) => {
+            if (err) return reject(err);
+            // console.log({ body: JSON.stringify(res.body) });
+            expect(res.body.status).to.equal('ok');
+            expect(res.body.message).to.equal('5 face(s) successfully processed');
+            expect(res.body.persons_updated).to.have.length(0);
+            expect(res.body.persons_new).to.have.length(0);
+            expect(res.body.faces_total).to.equal(6);
+            expect(res.body.matches).to.have.length(1);
+            processResults(res.body.persons_new);
+            resolve();
+          });
+      });
+    });
+    it('[POST] with 6 faces on image (1 excluded, 4 bad yaw) [new_person_square_min: 50, new_person_yaw_max: 20, multi: true] ("200 Ok" - "5 face(s) successfully processed")', function () {
+      return nextStep((resolve, reject) => {
+        req
+          .post('/person/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .field('group_id', tempSourceGroupId)
+          .field('source_id', tempSourceId)
+          .field('list_id', tempPersonListId)
+          .field('multi', true)
+          .field('new_person_square_min', 50)
+          .field('new_person_yaw_max', 5)
+          .field('hnsw', hnsw)
+          .attach('image', `${__dirname}/../__mocks__/6_faces_1_small.jpg`)
+          .expect(201)
+          .end((err, res) => {
+            if (err) return reject(err);
+            // console.log({ body: JSON.stringify(res.body) });
+            expect(res.body.status).to.equal('ok');
+            expect(res.body.message).to.equal('5 face(s) successfully processed');
+            expect(res.body.persons_updated).to.have.length(1);
+            expect(res.body.persons_new).to.have.length(2);
+            expect(res.body.faces_total).to.equal(6);
+            expect(res.body.matches).to.have.length(1);
+            processResults(res.body.persons_new);
+            resolve();
+          });
+      });
+    });
+    it('[POST] with 6 faces on image (1 excluded, 1 bad yaw) [new_person_square_min: 50, new_person_yaw_max: 50, multi: true] ("201 Created" - "5 face(s) successfully processed")', function () {
+      return nextStep((resolve, reject) => {
+        req
+          .post('/person/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .field('group_id', tempSourceGroupId)
+          .field('source_id', tempSourceId)
+          .field('list_id', tempPersonListId)
+          .field('multi', true)
+          .field('new_person_square_min', 50)
+          .field('new_person_yaw_max', 80)
+          .field('hnsw', hnsw)
+          .attach('image', `${__dirname}/../__mocks__/6_faces_1_small.jpg`)
+          .expect(201)
+          .end((err, res) => {
+            if (err) return reject(err);
+            // console.log({ body: JSON.stringify(res.body) });
+            expect(res.body.status).to.equal('ok');
+            expect(res.body.message).to.equal('5 face(s) successfully processed');
+            expect(res.body.persons_updated).to.have.length(3);
+            expect(res.body.persons_new).to.have.length(2);
+            expect(res.body.faces_total).to.equal(6);
+            expect(res.body.matches).to.have.length(3);
+            processResults(res.body.persons_new);
+            resolve();
+          });
+      });
+    });
+    it('[POST] with 6 faces on image (1 excluded, 5 bad yaw) [new_person_square_min: 50, new_person_yaw_max: 5, multi: true] ("200 Ok" - "5 face(s) successfully processed")', function () {
+      return nextStep((resolve, reject) => {
+        req
+          .post('/person/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .field('group_id', tempSourceGroupId)
+          .field('source_id', tempSourceId)
+          .field('list_id', tempPersonListId)
+          .field('multi', true)
+          .field('new_person_square_min', 50)
+          .field('new_person_yaw_max', 5)
+          .field('hnsw', hnsw)
+          .attach('image', `${__dirname}/../__mocks__/6_faces_1_small.jpg`)
+          .expect(200)
+          .end((err, res) => {
+            if (err) return reject(err);
+            // console.log({ body: JSON.stringify(res.body) });
+            expect(res.body.status).to.equal('ok');
+            expect(res.body.message).to.equal('5 face(s) successfully processed');
+            expect(res.body.persons_updated).to.have.length(3);
+            expect(res.body.persons_new).to.have.length(0);
+            expect(res.body.faces_total).to.equal(6);
+            expect(res.body.matches).to.have.length(5);
+            processResults(res.body.persons_new);
+            resolve();
+          });
+      });
+    });
+    it('[POST] replace 1 faces ("200 Ok" - "1 face(s) successfully processed")', function () {
+      return nextStep((resolve, reject) => {
+        req
+          .post('/person/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .field('group_id', tempSourceGroupId)
+          .field('source_id', tempSourceId)
+          .field('list_id', tempPersonListId)
+          .field('multi', true)
+          .field('new_person_square_min', '50')
+          .field('new_person_yaw_max', '40')
+          .field('hnsw', hnsw)
+          .attach('image', `${__dirname}/../__mocks__/1_face_w45_h54_yaw-6_pitch-11.jpg`)
+          .expect(200)
+          .end((err, res) => {
+            if (err) return reject(err);
+            // console.log({ body: JSON.stringify(res.body) });
+            expect(res.body.status).to.equal('ok');
+            expect(res.body.message).to.equal('1 face(s) successfully processed');
+            expect(res.body.persons_updated).to.have.length(1);
+            expect(res.body.persons_new).to.have.length(0);
+            expect(res.body.faces_total).to.equal(1);
+            expect(res.body.matches).to.have.length(1);
+            processResults(res.body.persons_new);
+            // console.log({ created });
+            resolve();
+          });
+      });
+    });
+  });
+  describe('Get single person', function () {
+    it(`[POST] non existent list_id ("404 Not Found" - "list id ${nonExistentId} does not found")`, function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/person')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ list_id: nonExistentId })
+          .send({ person_id: created[tempPersonListId][0] })
+          .expect(404)
+          .end((err, res) => {
+            // console.log({ body: JSON.stringify(res.body) });
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal(`list id ${nonExistentId} does not found`);
+            resolve();
+          });
+      });
+    });
+    it(`[POST] non existent person_id ("404 Not Found" - "person id ${nonExistentId} does not found")`, function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/person')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ list_id: tempPersonListId })
+          .send({ person_id: nonExistentId })
+          .expect(404)
+          .end((err, res) => {
+            // console.log({ body: JSON.stringify(res.body) });
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal(`person id ${nonExistentId} does not found`);
+            resolve();
+          });
+      });
+    });
+    it('[POST] person data ("200 Ok")', function () {
+      // console.log({ 'created[tempPersonListId]': created[tempPersonListId] });
+      return new Promise((resolve, reject) => {
+        req
+          .post('/person')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ list_id: tempPersonListId })
+          .send({ person_id: created[tempPersonListId][0] })
+          .expect(200)
+          .expect('Content-Type', /json/)
+          .end((err, res) => {
+            // console.log({ body: JSON.stringify(res.body) });
+            if (err) return reject(err);
+            const schemaError = personSchema.validate(res.body);
+            expect(schemaError).to.be.an('undefined');
+            resolve();
+          });
+      });
+    });
+  });
+  describe('PersonUpdate sanity checks', function () {
+    it('[PUT] without person_id ("400 Bad Request" - "invalid schema")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .put('/person/update')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            // console.log({ body: JSON.stringify(res.body) });
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+    it('[PUT] with bad person_id ("400 Bad Request" - "invalid schema")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .put('/person/update')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ person_id: 0 })
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            // console.log({ body: JSON.stringify(res.body) });
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+    it('[PUT] without update fields ("400 Bad Request" - "invalid schema")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .put('/person/update')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ person_id: nonExistentId })
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            // console.log({ body: JSON.stringify(res.body) });
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('nothing to change');
+            resolve();
+          });
+      });
+    });
+    it(`[PUT] with non existent list_id ("400 Bad Request" - "list id ${nonExistentId} does not found")`, function () {
+      return new Promise((resolve, reject) => {
+        req
+          .put('/person/update')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ fields: ['111'] })
+          .send({ list_id: nonExistentId })
+          .send({ person_id: nonExistentId })
+          .expect(404)
+          .end((err, res) => {
+            if (err) return reject(err);
+            // console.log({ body: JSON.stringify(res.body) });
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal(`list id ${nonExistentId} does not found`);
+            resolve();
+          });
+      });
+    });
+    it(`[PUT] with non existent person_id ("400 Bad Request" - "person id ${nonExistentId} does not found")`, function () {
+      return new Promise((resolve, reject) => {
+        req
+          .put('/person/update')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ fields: ['111'] })
+          .send({ list_id: tempPersonListId })
+          .send({ person_id: nonExistentId })
+          .expect(404)
+          .end((err, res) => {
+            if (err) return reject(err);
+            // console.log({ body: JSON.stringify(res.body) });
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal(`person id ${nonExistentId} does not found`);
+            resolve();
+          });
+      });
+    });
+  });
+  describe('Person update', function () {
+    it('[PUT] update new_person_threshold ("200 Ok")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .put('/person/update')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ list_id: tempPersonListId })
+          .send({ person_id: created[tempPersonListId][0] })
+          .send({ fields: fieldsUpdate })
+          .expect(200)
+          .end((err, res) => {
+            if (err) return reject(err);
+            // console.log({ body: JSON.stringify(res.body) });
+            expect(res.body.status).to.equal('ok');
+            expect(res.body.message).to.equal('operation succeeded');
+            resolve();
+          });
+      });
+    });
+    it('[POST] check fro changes ("200 Ok")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/person')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ list_id: tempPersonListId })
+          .send({ person_id: created[tempPersonListId][0] })
+          .expect(200)
+          .expect('Content-Type', /json/)
+          .end((err, res) => {
+            // console.log({ body: JSON.stringify(res.body) });
+            if (err) return reject(err);
+            const schemaError = personSchema.validate(res.body);
+            expect(schemaError).to.be.an('undefined');
+            // console.log({ 'res.body.fields': res.body.fields });
+            expect(res.body.fields).to.deep.equal(fieldsUpdate);
+            resolve();
+          });
+      });
+    });
+  });
+  describe('PersonDelete sanity checks', function () {
+    it('[DELETE] without list_id & person_id ("400 Bad Request" - "invalid schema")', function () {
+      return nextStep((resolve, reject) => {
+        req
+          .delete('/person/delete')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+    it('[DELETE] without person_id ("400 Bad Request" - "invalid schema")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .delete('/person/delete')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send('list_id', tempPersonListId)
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            // console.log({ body: JSON.stringify(res.body) });
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+    it('[DELETE] without list_id ("400 Bad Request" - "invalid schema")', function () {
+      // console.log('tempPersonListId', tempPersonListId);
+      return new Promise((resolve, reject) => {
+        req
+          .delete('/person/delete')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send('person_id', nonExistentId)
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            // console.log({ body: JSON.stringify(res.body) });
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+    it('[DELETE] with bad list_id type ("400 Bad Request" - "invalid schema")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .delete('/person/delete')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send('list_id', -1)
+          .send('person_id', nonExistentId)
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            // console.log({ body: JSON.stringify(res.body) });
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+    it('[DELETE] with bad person_id type ("400 Bad Request" - "invalid schema")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .delete('/person/delete')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send('list_id', nonExistentId)
+          .send('list_id', nonExistentId)
+          .send('person_id', -1)
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+  });
+  describe('Person delete', function () {
+    after(async function () {
+      const listuuid = models.timeuuidFromString(tempPersonListId);
+      counter = await counterHandler({
+        prefix: 'PersonByList',
+        useruuid,
+        listuuid,
+        frequency: 'total',
+        group : { listuuid  },
+      });
+      expect(counter.counter[0].value.toString()).to.be.equal('0');
+    });
+    it('[DELETE] with non existing list_id ("200 Ok" - "list with this id does not found")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .delete('/person/delete')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ list_id: nonExistentId })
+          .send({ person_id: nonExistentId })
+          .expect(200)
+          .end((err, res) => {
+            if (err) return reject(err);
+            // console.log({ body: JSON.stringify(res.body) });
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('list with this id does not found');
+            resolve();
+          });
+      });
+    });
+    it('[DELETE] all created ("200 Ok" - "X person(s) deleted")', function () {
+      return new Promise((resolve, reject) => {
+        // console.log('created rest', created[tempPersonListId]);
+        if (!created[tempPersonListId]) return resolve();
+        const uniq = [...new Set(created[tempPersonListId])].length;
+        req
+          .delete('/person/delete')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ list_id: tempPersonListId })
+          .send({ person_id: created[tempPersonListId] })
+          .expect(200)
+          .end((err, res) => {
+            if (err) return reject(err);
+            // console.log({ body: JSON.stringify(res.body) });
+            expect(res.body.status).to.equal('ok');
+            expect(res.body.message).to.equal(`${uniq} person(s) deleted`);
+            resolve();
+          });
+      });
+    });
+  });
+  describe('Temporary mocks delete', function () {
+    it(`[DELETE] delete temporary source group '${tempSourceGroupId}' ("200 Ok" - "1 group(s) deleted")`, function () {
+      return nextStep((resolve, reject) => {
+        req
+          .delete('/source/group/delete')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ group_id: tempSourceGroupId })
+          .expect(200)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('ok');
+            expect(res.body.message).to.equal('1 group(s) deleted');
+            resolve();
+          });
+      });
+    });
+    it(`[DELETE] delete temporary person list ("200 Ok" - 'list ${tempPersonListId} deleted')`, function () {
+      return new Promise((resolve, reject) => {
+        req
+          .delete('/person/list/delete')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ list_id: tempPersonListId })
+          .expect(200)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('ok');
+            expect(res.body.message).to.equal(`list ${tempPersonListId} deleted`);
+            resolve();
+          });
+      });
+    });
+  });
+});

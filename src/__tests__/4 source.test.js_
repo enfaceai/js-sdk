@@ -1,0 +1,851 @@
+import 'dotenv/config.js';
+import request from 'supertest';
+import faker from 'faker';
+import chai, { expect } from 'chai';
+import chaiuuid from 'chai-uuid';
+import {
+  SOURCE_GROUP_NAME_MAX_LENGTH,
+  SOURCE_NAME_MAX_LENGTH,
+  ZERO_UUID,
+  SOURCE_PERSON_ADD_THRESHOLD,
+  SOURCE_PERSON_SQUARE,
+  SOURCE_PERSON_ANGLE,
+} from '../../models/constants.js';
+import { features } from '../../common/features.js';
+import { INITIAL_USER_LOGIN, INITIAL_USER_PASSWORD } from '../../common/constants';
+
+chai.use(chaiuuid);
+const req = request(process.env.TEST_API_URL);
+const tempGroupName = faker.random.alphaNumeric(SOURCE_GROUP_NAME_MAX_LENGTH);
+let tempGroupId;
+const sourceName = faker.random.alphaNumeric(SOURCE_NAME_MAX_LENGTH);
+const sourceRename = faker.random.alphaNumeric(SOURCE_NAME_MAX_LENGTH);
+const featureCheckChangeIndexes = [0];
+const featureCheckChange = featureCheckChangeIndexes.map(item => features[item].name);
+const nonExistentId = '13814001-1dd2-11b2-b619-5502c27ed19a';
+const created = [];
+let initialCount = 0;
+let xToken;
+
+const getRandomDataValue = (data, needKey = false) => {
+  const keys = Object.keys(data);
+  const randomKey = keys[Math.floor(Math.random() * keys.length)];
+  return needKey
+    ? randomKey
+    : data[randomKey];
+};
+
+const newPersonThresholdChange = getRandomDataValue(SOURCE_PERSON_ADD_THRESHOLD, true);
+const newPersonSquareMinChange = getRandomDataValue(SOURCE_PERSON_SQUARE);
+const newPersonYawMaxChange = getRandomDataValue(SOURCE_PERSON_ANGLE);
+
+describe('Source check', function () {
+  this.timeout(10000000);
+  before(function () {
+    return new Promise((resolve, reject) => {
+      req
+        .post('/user/login')
+        .set('Accept', 'application/json')
+        .send({ email: INITIAL_USER_LOGIN })
+        .send({ password: INITIAL_USER_PASSWORD })
+        .expect(200)
+        .end((err, res) => {
+          if (err) return reject(err);
+          expect(res.body.token).to.be.a('string');
+          xToken = res.body.token;
+          resolve();
+        });
+    });
+  });
+  describe('Continue authorized', function () {
+    before(function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/source/group/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ name: tempGroupName })
+          .send({
+            person_list_search: [],
+          })
+          .expect(201)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('ok');
+            expect(res.body.message).to.equal('source group created');
+            expect(res.body.group_id).to.be.a.uuid('v1');
+            tempGroupId = res.body.group_id;
+            resolve();
+          });
+      });
+    });
+    after(function () {
+      return new Promise((resolve, reject) => {
+        req
+          .delete('/source/group/delete')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ group_id: tempGroupId })
+          .expect(200)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('ok');
+            resolve();
+          });
+      });
+    });
+    describe('Sources schema sanity checks', function () {
+      it('[GET] sources without group_id ("400 Bad Request")', function () {
+        return new Promise((resolve, reject) => {
+          req
+            .get('/sources')
+            .set('Accept', 'application/json')
+            .set('token', xToken)
+            .expect(400)
+            .expect('Content-Type', /json/)
+            .end((err, res) => {
+              if (err) return reject(err);
+              expect(res.body.status).to.be.equal('error');
+              expect(res.body.message).to.be.equal('invalid schema');
+              resolve();
+            });
+        });
+      });
+      it('[GET] sources with group_id not uuid ("400 Bad Request" - "invalid schema")', function () {
+        return new Promise((resolve, reject) => {
+          req
+            .get('/sources')
+            .set('Accept', 'application/json')
+            .set('token', xToken)
+            .send({ group_id: '1381400111dd2-11b2-b619-5502c27ed19a' })
+            .expect(400)
+            .expect('Content-Type', /json/)
+            .end((err, res) => {
+              if (err) return reject(err);
+              expect(res.body.status).to.be.equal('error');
+              expect(res.body.message).to.be.equal('invalid schema');
+              resolve();
+            });
+        });
+      });
+      it('[GET] sources with non existent group_id ("400 Bad Request" - "group with this id does not found")', function () {
+        return new Promise((resolve, reject) => {
+          req
+            .get('/sources')
+            .set('Accept', 'application/json')
+            .set('token', xToken)
+            .send({ group_id: nonExistentId })
+            .expect(400)
+            .expect('Content-Type', /json/)
+            .end((err, res) => {
+              if (err) return reject(err);
+              expect(res.body.status).to.be.equal('error');
+              expect(res.body.message).to.be.equal('group with this id does not found');
+              resolve();
+            });
+        });
+      });
+    });
+    describe('Get sources in group_id', function () {
+      it('[GET] responds correctly with json ("200 Ok")', function () {
+        return new Promise((resolve, reject) => {
+          req
+            .get('/sources')
+            .set('Accept', 'application/json')
+            .set('token', xToken)
+            .send({ group_id: tempGroupId })
+            // .send({ group_id: ZERO_UUID })
+            .expect(200)
+            .expect('Content-Type', /json/)
+            .end((err, res) => {
+              // console.log(res.body, res.body[0].person_list_add);
+              if (err) return reject(err);
+              expect(res.body.length).to.be.least(0);
+              initialCount = res.body.length;
+              resolve();
+            });
+        });
+      });
+    });
+    describe('SourceCreate schema sanity checks', function () {
+      it('[POST] create source without group_id ("400 Bad Request" - "invalid schema")', function () {
+        return new Promise((resolve, reject) => {
+          req
+            .post('/source/create')
+            .set('Accept', 'application/json')
+            .set('token', xToken)
+            .expect(400)
+            .end((err, res) => {
+              if (err) return reject(err);
+              expect(res.body.status).to.equal('error');
+              expect(res.body.message).to.equal('invalid schema');
+              resolve();
+            });
+        });
+      });
+      it('[POST] create source without name ("400 Bad Request" - "invalid schema")', function () {
+        return new Promise((resolve, reject) => {
+          req
+            .post('/source/create')
+            .set('Accept', 'application/json')
+            .set('token', xToken)
+            .send({ group_id: tempGroupId })
+            .expect(400)
+            .end((err, res) => {
+              if (err) return reject(err);
+              expect(res.body.status).to.equal('error');
+              expect(res.body.message).to.equal('invalid schema');
+              resolve();
+            });
+        });
+      });
+      it('[POST] create source with bad feature_check type ("400 Bad Request" - "invalid schema")', function () {
+        return new Promise((resolve, reject) => {
+          req
+            .post('/source/create')
+            .set('Accept', 'application/json')
+            .set('token', xToken)
+            .send({ group_id: tempGroupId })
+            .send({ name: sourceName })
+            .send({ feature_check: -11 })
+            .expect(400)
+            .end((err, res) => {
+              // console.log(res.body);
+              if (err) return reject(err);
+              expect(res.body.status).to.equal('error');
+              expect(res.body.message).to.equal('invalid schema');
+              resolve();
+            });
+        });
+      });
+      it('[POST] bad feature_check values ("400 Bad Request" - "invalid schema")', function () {
+        return new Promise((resolve, reject) => {
+          req
+            .post('/source/create')
+            .set('Accept', 'application/json')
+            .set('token', xToken)
+            .send({ feature_check: [-11, 'abc'] })
+            .expect(400)
+            .end((err, res) => {
+              if (err) return reject(err);
+              expect(res.body.status).to.equal('error');
+              expect(res.body.message).to.equal('invalid schema');
+              resolve();
+            });
+        });
+      });
+      it('[POST] create source with bad new_person_threshold ("400 Bad Request" - "invalid schema")', function () {
+        return new Promise((resolve, reject) => {
+          req
+            .post('/source/create')
+            .set('Accept', 'application/json')
+            .set('token', xToken)
+            .send({ group_id: tempGroupId })
+            .send({ name: sourceName })
+            .send({ feature_check: [] })
+            .send({ new_person_threshold: 34 })
+            .expect(400)
+            .end((err, res) => {
+              if (err) return reject(err);
+              expect(res.body.status).to.equal('error');
+              expect(res.body.message).to.equal('invalid schema');
+              resolve();
+            });
+        });
+      });
+      it('[POST] create source with bad new_person_square_min ("400 Bad Request" - "invalid schema")', function () {
+        return new Promise((resolve, reject) => {
+          req
+            .post('/source/create')
+            .set('Accept', 'application/json')
+            .set('token', xToken)
+            .send({ group_id: tempGroupId })
+            .send({ name: sourceName })
+            .send({ feature_check: [] })
+            .send({ new_person_threshold: getRandomDataValue(SOURCE_PERSON_ADD_THRESHOLD, true) })
+            .send({ new_person_square_min: 0 })
+            .expect(400)
+            .end((err, res) => {
+              if (err) return reject(err);
+              expect(res.body.status).to.equal('error');
+              expect(res.body.message).to.equal('invalid schema');
+              resolve();
+            });
+        });
+      });
+      it('[POST] create source with bad new_person_yaw_max ("400 Bad Request" - "invalid schema")', function () {
+        return new Promise((resolve, reject) => {
+          req
+            .post('/source/create')
+            .set('Accept', 'application/json')
+            .set('token', xToken)
+            .send({ group_id: tempGroupId })
+            .send({ name: sourceName })
+            .send({ feature_check: [] })
+            .send({ new_person_threshold: getRandomDataValue(SOURCE_PERSON_ADD_THRESHOLD, true) })
+            .send({ new_person_square_min: getRandomDataValue(SOURCE_PERSON_SQUARE) })
+            .send({ new_person_yaw_max: [] })
+            .expect(400)
+            .end((err, res) => {
+              if (err) return reject(err);
+              expect(res.body.status).to.equal('error');
+              expect(res.body.message).to.equal('invalid schema');
+              resolve();
+            });
+        });
+      });
+      it('[POST] create source with bad person_list_add ("400 Bad Request" - "invalid schema")', function () {
+        return new Promise((resolve, reject) => {
+          req
+            .post('/source/create')
+            .set('Accept', 'application/json')
+            .set('token', xToken)
+            .send({ group_id: tempGroupId })
+            .send({ name: sourceName })
+            .send({ feature_check: [] })
+            .send({ new_person_threshold: getRandomDataValue(SOURCE_PERSON_ADD_THRESHOLD, true) })
+            .send({ new_person_square_min: getRandomDataValue(SOURCE_PERSON_SQUARE) })
+            .send({ new_person_yaw_max: getRandomDataValue(SOURCE_PERSON_ANGLE) })
+            .send({ person_list_add: 'bad' })
+            .expect(400)
+            .end((err, res) => {
+              if (err) return reject(err);
+              expect(res.body.status).to.equal('error');
+              expect(res.body.message).to.equal('invalid schema');
+              resolve();
+            });
+        });
+      });
+      it('[POST] create source with person_list_add bad values ("400 Bad Request" - "invalid schema")', function () {
+        return new Promise((resolve, reject) => {
+          req
+            .post('/source/create')
+            .set('Accept', 'application/json')
+            .set('token', xToken)
+            .send({ group_id: tempGroupId })
+            .send({ name: sourceName })
+            .send({ feature_check: [] })
+            .send({ new_person_threshold: getRandomDataValue(SOURCE_PERSON_ADD_THRESHOLD, true) })
+            .send({ new_person_square_min: getRandomDataValue(SOURCE_PERSON_SQUARE) })
+            .send({ new_person_yaw_max: getRandomDataValue(SOURCE_PERSON_ANGLE) })
+            .send({ person_list_add: ['bad'] })
+            .expect(400)
+            .end((err, res) => {
+              if (err) return reject(err);
+              expect(res.body.status).to.equal('error');
+              expect(res.body.message).to.equal('invalid schema');
+              resolve();
+            });
+        });
+      });
+      it('[POST] create source with non existing group_id ("400 Bad Request" - "`group id \'uuid\' does not found`")', function () {
+        return new Promise((resolve, reject) => {
+          req
+            .post('/source/create')
+            .set('Accept', 'application/json')
+            .set('token', xToken)
+            .send({ group_id: nonExistentId })
+            .send({ name: sourceName })
+            .expect(400)
+            .end((err, res) => {
+              if (err) return reject(err);
+              expect(res.body.status).to.equal('error');
+              expect(res.body.message).to.equal(`group id '${nonExistentId}' does not found`);
+              resolve();
+            });
+        });
+      });
+      it('[POST] create source with person_list_add non existing id ("400 Bad Request" - "`person list id \'uuid\' does not found`")', function () {
+        return new Promise((resolve, reject) => {
+          req
+            .post('/source/create')
+            .set('Accept', 'application/json')
+            .set('token', xToken)
+            .send({ group_id: tempGroupId })
+            .send({ name: sourceName })
+            .send({ person_list_add: [nonExistentId] })
+            .expect(400)
+            .end((err, res) => {
+              if (err) return reject(err);
+              expect(res.body.status).to.equal('error');
+              expect(res.body.message).to.equal(`person list id '${nonExistentId}' does not found`);
+              resolve();
+            });
+        });
+      });
+    });
+    describe('Source create', function () {
+      it('[POST] create source with default params ("201 Created" - "source created")', function () {
+        return new Promise((resolve, reject) => {
+          req
+            .post('/source/create')
+            .set('Accept', 'application/json')
+            .set('token', xToken)
+            .send({ group_id: tempGroupId })
+            .send({ name: sourceName })
+            .expect(201)
+            .end((err, res) => {
+              // console.log(res.body);
+              if (err) return reject(err);
+              expect(res.body.status).to.equal('ok');
+              expect(res.body.message).to.equal('source created');
+              expect(res.body.source_id).to.be.a.uuid('v1');
+              created.push(res.body.source_id);
+              resolve();
+            });
+        });
+      });
+      it('[POST] create source with custom params ("200 Ok" - "source created")', function () {
+        return new Promise((resolve, reject) => {
+          req
+            .post('/source/create')
+            .set('Accept', 'application/json')
+            .set('token', xToken)
+            .send({ group_id: tempGroupId })
+            .send({ name: sourceName })
+            .send({ feature_check: features.map(item => item.name) })
+            .send({ new_person_threshold: getRandomDataValue(SOURCE_PERSON_ADD_THRESHOLD, true) })
+            .send({ new_person_square_min: getRandomDataValue(SOURCE_PERSON_SQUARE) })
+            .send({ new_person_yaw_max: getRandomDataValue(SOURCE_PERSON_ANGLE) })
+            .send({ person_list_add: [ZERO_UUID] })
+            .expect(201)
+            .end((err, res) => {
+              if (err) return reject(err);
+              expect(res.body.status).to.equal('ok');
+              expect(res.body.message).to.equal('source created');
+              expect(res.body.source_id).to.be.a.uuid('v1');
+              created.push(res.body.source_id);
+              resolve();
+            });
+        });
+      });
+      it('[POST] create source with single feature_check ("200 Ok" - "source created")', function () {
+        return new Promise((resolve, reject) => {
+          req
+            .post('/source/create')
+            .set('Accept', 'application/json')
+            .set('token', xToken)
+            .send({ group_id: tempGroupId })
+            .send({ name: faker.random.alphaNumeric(SOURCE_NAME_MAX_LENGTH) })
+            .send({ feature_check: 'gender' })
+            .expect(201)
+            .end((err, res) => {
+              if (err) return reject(err);
+              expect(res.body.status).to.equal('ok');
+              expect(res.body.message).to.equal('source created');
+              expect(res.body.source_id).to.be.a.uuid('v1');
+              created.push(res.body.source_id);
+              resolve();
+            });
+        });
+      });
+    });
+    describe('Source update', function () {
+      it('[PUT] update group with unknown group_id ("200 Ok" - "source group with this id does not found")', function () {
+        return new Promise((resolve, reject) => {
+          req
+            .put('/source/update')
+            .set('Accept', 'application/json')
+            .set('token', xToken)
+            .send({ group_id: nonExistentId })
+            .send({ source_id: nonExistentId })
+            .send({ name: faker.random.alphaNumeric(SOURCE_NAME_MAX_LENGTH) })
+            .expect(200)
+            .end((err, res) => {
+              if (err) return reject(err);
+              expect(res.body.status).to.equal('error');
+              expect(res.body.message).to.equal('source group with this id does not found');
+              resolve();
+            });
+        });
+      });
+      it('[PUT] update group with unknown id ("200 Ok" - "source with this id does not found")', function () {
+        return new Promise((resolve, reject) => {
+          req
+            .put('/source/update')
+            .set('Accept', 'application/json')
+            .set('token', xToken)
+            .send({ group_id: tempGroupId })
+            .send({ source_id: nonExistentId })
+            .send({ name: faker.random.alphaNumeric(SOURCE_GROUP_NAME_MAX_LENGTH) })
+            .expect(200)
+            .end((err, res) => {
+              if (err) return reject(err);
+              expect(res.body.status).to.equal('error');
+              expect(res.body.message).to.equal('source with this id does not found');
+              resolve();
+            });
+        });
+      });
+      it('[PUT] update source name ("200 Ok")', function () {
+        return new Promise((resolve, reject) => {
+          req
+            .put('/source/update')
+            .set('Accept', 'application/json')
+            .set('token', xToken)
+            .send({ group_id: tempGroupId })
+            .send({ source_id: created[0] })
+            .send({ name: sourceRename })
+            .expect(200)
+            .end((err, res) => {
+              if (err) return reject(err);
+              expect(res.body.status).to.equal('ok');
+              resolve();
+            });
+        });
+      });
+      it('[PUT] update feature_check ("200 Ok")', function () {
+        return new Promise((resolve, reject) => {
+          req
+            .put('/source/update')
+            .set('Accept', 'application/json')
+            .set('token', xToken)
+            .send({ group_id: tempGroupId })
+            .send({ source_id: created[0] })
+            .send({ feature_check: featureCheckChange })
+            .expect(200)
+            .end((err, res) => {
+              if (err) return reject(err);
+              expect(res.body.status).to.equal('ok');
+              resolve();
+            });
+        });
+      });
+      it('[PUT] update new_person_threshold ("200 Ok")', function () {
+        return new Promise((resolve, reject) => {
+          req
+            .put('/source/update')
+            .set('Accept', 'application/json')
+            .set('token', xToken)
+            .send({ group_id: tempGroupId })
+            .send({ source_id: created[0] })
+            .send({ new_person_threshold: newPersonThresholdChange })
+            .expect(200)
+            .end((err, res) => {
+              // console.log(res.body);
+              if (err) return reject(err);
+              expect(res.body.status).to.equal('ok');
+              resolve();
+            });
+        });
+      });
+      it('[PUT] update new_person_square_min ("200 Ok")', function () {
+        return new Promise((resolve, reject) => {
+          req
+            .put('/source/update')
+            .set('Accept', 'application/json')
+            .set('token', xToken)
+            .send({ group_id: tempGroupId })
+            .send({ source_id: created[0] })
+            .send({ new_person_square_min: newPersonSquareMinChange })
+            .expect(200)
+            .end((err, res) => {
+              // console.log(res.body, { newPersonSquareMinChange });
+              if (err) return reject(err);
+              expect(res.body.status).to.equal('ok');
+              resolve();
+            });
+        });
+      });
+      it('[PUT] update new_person_yaw_max ("200 Ok")', function () {
+        return new Promise((resolve, reject) => {
+          req
+            .put('/source/update')
+            .set('Accept', 'application/json')
+            .set('token', xToken)
+            .send({ group_id: tempGroupId })
+            .send({ source_id: created[0] })
+            .send({ new_person_yaw_max: newPersonYawMaxChange })
+            .expect(200)
+            .end((err, res) => {
+              if (err) return reject(err);
+              expect(res.body.status).to.equal('ok');
+              resolve();
+            });
+        });
+      });
+      it('[PUT] update person_list_add ("200 Ok")', function () {
+        return new Promise((resolve, reject) => {
+          req
+            .put('/source/update')
+            .set('Accept', 'application/json')
+            .set('token', xToken)
+            .send({ group_id: tempGroupId })
+            .send({ source_id: created[0] })
+            .send({ person_list_add: [ZERO_UUID] })
+            .expect(200)
+            .end((err, res) => {
+              // console.log(res.body);
+              if (err) return reject(err);
+              expect(res.body.status).to.equal('ok');
+              resolve();
+            });
+        });
+      });
+      it('[GET] get all sources and check result ("200 Ok")', function () {
+        return new Promise((resolve, reject) => {
+          req
+            .get('/sources')
+            .set('Accept', 'application/json')
+            .set('token', xToken)
+            .send({ group_id: tempGroupId })
+            .expect(200)
+            .expect('Content-Type', /json/)
+            .end((err, res) => {
+              if (err) return reject(err);
+              // console.log(res.body);
+              const newItem = res.body.find(item => item.source_id === created[0]);
+              expect(newItem.name).to.be.equal(sourceRename);
+              expect(newItem.feature_check).to.deep.equal(featureCheckChange);
+              expect(`${newItem.auto_person_create.new_person_threshold}`).to.be.equal(newPersonThresholdChange);
+              if (newPersonThresholdChange !== 'never') {
+                expect(newItem.auto_person_create.new_person_square_min).to.be.equal(newPersonSquareMinChange);
+                expect(newItem.auto_person_create.new_person_yaw_max).to.be.equal(newPersonYawMaxChange);
+                expect(newItem.auto_person_create.person_list_add).to.have.length(1);
+                expect(newItem.auto_person_create.person_list_add[0]).to.be.equal(ZERO_UUID);
+              }
+              resolve();
+            });
+        });
+      });
+    });
+    describe('SourceDelete schema sanity checks', function () {
+      it('[DELETE] delete source without group_id ("400 Bad Request" - "invalid schema")', function () {
+        return new Promise((resolve, reject) => {
+          req
+            .delete('/source/delete')
+            .set('Accept', 'application/json')
+            .set('token', xToken)
+            .expect(400)
+            .end((err, res) => {
+              if (err) return reject(err);
+              expect(res.body.status).to.equal('error');
+              expect(res.body.message).to.equal('invalid schema');
+              resolve();
+            });
+        });
+      });
+      it('[DELETE] delete source with wrong group_id type ("400 Bad Request" - "invalid schema")', function () {
+        return new Promise((resolve, reject) => {
+          req
+            .delete('/source/delete')
+            .set('Accept', 'application/json')
+            .set('token', xToken)
+            .send({ group_id: 0 })
+            .expect(400)
+            .end((err, res) => {
+              if (err) return reject(err);
+              expect(res.body.status).to.equal('error');
+              expect(res.body.message).to.equal('invalid schema');
+              resolve();
+            });
+        });
+      });
+      it('[DELETE] delete source with wrong id type ("400 Bad Request" - "invalid schema")', function () {
+        return new Promise((resolve, reject) => {
+          req
+            .delete('/source/delete')
+            .set('Accept', 'application/json')
+            .set('token', xToken)
+            .send({ group_id: tempGroupId })
+            .send({ source_id: true })
+            .expect(400)
+            .end((err, res) => {
+              if (err) return reject(err);
+              expect(res.body.status).to.equal('error');
+              expect(res.body.message).to.equal('invalid schema');
+              resolve();
+            });
+        });
+      });
+      it('[DELETE] delete group with id not uuid ("400 Bad Request" - "invalid schema")', function () {
+        return new Promise((resolve, reject) => {
+          req
+            .delete('/source/delete')
+            .set('Accept', 'application/json')
+            .set('token', xToken)
+            .send({ group_id: tempGroupId })
+            .send({ source_id: 'bad_id' })
+            .expect(400)
+            .end((err, res) => {
+              if (err) return reject(err);
+              expect(res.body.status).to.equal('error');
+              expect(res.body.message).to.equal('invalid schema');
+              resolve();
+            });
+        });
+      });
+      it('[DELETE] delete group with [id] not uuid ("400 Bad Request" - "invalid schema")', function () {
+        return new Promise((resolve, reject) => {
+          req
+            .delete('/source/delete')
+            .set('Accept', 'application/json')
+            .set('token', xToken)
+            .send({ group_id: tempGroupId })
+            .send({ source_id: ['bad_id'] })
+            .expect(400)
+            .end((err, res) => {
+              if (err) return reject(err);
+              expect(res.body.status).to.equal('error');
+              expect(res.body.message).to.equal('invalid schema');
+              resolve();
+            });
+        });
+      });
+      it('[DELETE] delete group with empty id ("400 Bad Request" - "invalid schema")', function () {
+        return new Promise((resolve, reject) => {
+          req
+            .delete('/source/delete')
+            .set('Accept', 'application/json')
+            .set('token', xToken)
+            .send({ group_id: tempGroupId })
+            .send({ source_id: '' })
+            .expect(400)
+            .end((err, res) => {
+              if (err) return reject(err);
+              expect(res.body.status).to.equal('error');
+              expect(res.body.message).to.equal('invalid schema');
+              resolve();
+            });
+        });
+      });
+      it('[DELETE] delete group with empty id array ("400 Bad Request" - "invalid schema")', function () {
+        return new Promise((resolve, reject) => {
+          req
+            .delete('/source/delete')
+            .set('Accept', 'application/json')
+            .set('token', xToken)
+            .send({ group_id: tempGroupId })
+            .send({ source_id: [] })
+            .expect(400)
+            .end((err, res) => {
+              if (err) return reject(err);
+              expect(res.body.status).to.equal('error');
+              expect(res.body.message).to.equal('invalid schema');
+              resolve();
+            });
+        });
+      });
+    });
+    describe('Source group delete', function () {
+      it('[DELETE] delete group with non existent group_id ("200 Ok" - "group with this id does not found")', function () {
+        return new Promise((resolve, reject) => {
+          req
+            .delete('/source/delete')
+            .set('Accept', 'application/json')
+            .set('token', xToken)
+            .send({ group_id: nonExistentId })
+            .send({ source_id: nonExistentId })
+            .expect(200)
+            .end((err, res) => {
+              if (err) return reject(err);
+              expect(res.body.status).to.equal('error');
+              expect(res.body.message).to.equal('group with this id does not found');
+              resolve();
+            });
+        });
+      });
+      it('[DELETE] delete group with non existent id ("200 Ok" - "no sources found with provided id(s)")', function () {
+        return new Promise((resolve, reject) => {
+          req
+            .delete('/source/delete')
+            .set('Accept', 'application/json')
+            .set('token', xToken)
+            .send({ group_id: tempGroupId })
+            .send({ source_id: [nonExistentId] })
+            .expect(200)
+            .end((err, res) => {
+              if (err) return reject(err);
+              expect(res.body.status).to.equal('error');
+              expect(res.body.message).to.equal('no sources found with provided id(s)');
+              resolve();
+            });
+        });
+      });
+      it('[DELETE] delete group with non existent [id] ("200 Ok" - "no sources found with provided id(s)")', function () {
+        return new Promise((resolve, reject) => {
+          req
+            .delete('/source/delete')
+            .set('Accept', 'application/json')
+            .set('token', xToken)
+            .send({ group_id: tempGroupId })
+            .send({ source_id: [nonExistentId] })
+            .expect(200)
+            .end((err, res) => {
+              if (err) return reject(err);
+              expect(res.body.status).to.equal('error');
+              expect(res.body.message).to.equal('no sources found with provided id(s)');
+              resolve();
+            });
+        });
+      });
+      it('[DELETE] delete default source ("200 Ok" - "can not delete default source")', function () {
+        return new Promise((resolve, reject) => {
+          req
+            .delete('/source/delete')
+            .set('Accept', 'application/json')
+            .set('token', xToken)
+            .send({ group_id: ZERO_UUID })
+            .send({ source_id: ZERO_UUID })
+            .expect(200)
+            .end((err, res) => {
+              if (err) return reject(err);
+              expect(res.body.status).to.equal('error');
+              expect(res.body.message).to.equal('can not delete default source');
+              resolve();
+            });
+        });
+      });
+      it('[DELETE] delete source by id ("200 Ok")', function () {
+        return new Promise((resolve, reject) => {
+          req
+            .delete('/source/delete')
+            .set('Accept', 'application/json')
+            .set('token', xToken)
+            .send({ group_id: tempGroupId })
+            .send({ source_id: created.pop() })
+            .expect(200)
+            .end((err, res) => {
+              if (err) return reject(err);
+              expect(res.body.status).to.equal('ok');
+              resolve();
+            });
+        });
+      });
+      it('[DELETE] delete source by [id] ("200 Ok")', function () {
+        return new Promise((resolve, reject) => {
+          req
+            .delete('/source/delete')
+            .set('Accept', 'application/json')
+            .set('token', xToken)
+            .send({ group_id: tempGroupId })
+            .send({ source_id: created })
+            .expect(200)
+            .end((err, res) => {
+              if (err) return reject(err);
+              expect(res.body.status).to.equal('ok');
+              resolve();
+            });
+        });
+      });
+    });
+    describe('Get source count after all', function () {
+      it('[GET] responds correctly with json ("200 Ok")', function () {
+        return new Promise((resolve, reject) => {
+          req
+            .get('/sources')
+            .set('Accept', 'application/json')
+            .set('token', xToken)
+            .send({ group_id: tempGroupId })
+            .expect(200)
+            .expect('Content-Type', /json/)
+            .end((err, res) => {
+              if (err) return reject(err);
+              expect(res.body.length).to.be.equal(initialCount);
+              resolve();
+            });
+        });
+      });
+    });
+  });
+});

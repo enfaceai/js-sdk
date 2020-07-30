@@ -1,0 +1,755 @@
+import 'dotenv/config.js';
+import request from 'supertest';
+import faker from 'faker';
+import chai, { expect } from 'chai';
+import chaiuuid from 'chai-uuid';
+import chaimatch from 'chai-match';
+import { nextStep } from '../../common/helpers.js';
+import { ZERO_UUID } from '../../models/constants.js';
+import { INITIAL_USER_LOGIN, INITIAL_USER_PASSWORD } from '../../common/constants';
+
+chai.use(chaimatch);
+chai.use(chaiuuid);
+const req = request(process.env.TEST_API_URL);
+const zeroImage = `${__dirname}/../__mocks__/zero.jpg`;
+let xToken;
+const nonExistentId = '13814001-1dd2-11b2-b619-5502c27ed19a';
+const tempPersonListName = `test list ${faker.random.alphaNumeric(5)}`;
+let tempPersonListId;
+const tempSourceGroupName = `source group ${faker.random.alphaNumeric(5)}`;
+let tempSourceGroupId;
+const tempSourceName = `source ${faker.random.alphaNumeric(5)}`;
+let tempSourceId;
+
+describe('Images processing actions', function () {
+  this.timeout(10000000);
+  before(function () {
+    return new Promise((resolve, reject) => {
+      req
+        .post('/user/login')
+        .set('Accept', 'application/json')
+        .send({ email: INITIAL_USER_LOGIN })
+        .send({ password: INITIAL_USER_PASSWORD })
+        .expect(200)
+        .end((err, res) => {
+          if (err) return reject(err);
+          expect(res.body.token).to.be.a('string');
+          xToken = res.body.token;
+          resolve();
+        });
+    });
+  });
+  describe('Temporary mocks', function () {
+    it('[POST] create temporary persons list ("201 Created")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/person/list/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ name: tempPersonListName })
+          .expect(201)
+          .end((err, res) => {
+            if (err) return reject(err);
+            // console.log({ res: res.body });
+            expect(res.body.status).to.equal('ok');
+            expect(res.body.list_id).to.be.a.uuid('v1');
+            tempPersonListId = res.body.list_id;
+            resolve();
+          });
+      });
+    });
+    it('[POST] create temporary source group ("201 Created" - "source group created")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/source/group/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ name: tempSourceGroupName })
+          .expect(201)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('ok');
+            expect(res.body.message).to.equal('source group created');
+            expect(res.body.group_id).to.be.a.uuid('v1');
+            tempSourceGroupId = res.body.group_id;
+            resolve();
+          });
+      });
+    });
+    it('[POST] create temporary source ("201 Created" - "source created")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/source/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ group_id: tempSourceGroupId })
+          .send({ name: tempSourceName })
+          .expect(201)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('ok');
+            expect(res.body.message).to.equal('source created');
+            expect(res.body.source_id).to.be.a.uuid('v1');
+            tempSourceId = res.body.source_id;
+            resolve();
+          });
+      });
+    });
+  });
+  describe('Action schema sanity checks', function () {
+    it('[POST] no image attached ("400 Bad Request" - "no image attached")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/action')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('no image attached');
+            resolve();
+          });
+      });
+    });
+    it('[POST] unexpected field ("400 Bad Request" - "unexpected field")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/action')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .attach('unexpected field', zeroImage)
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('unexpected field');
+            resolve();
+          });
+      });
+    });
+    it('[POST] too much images ("400 Bad Request" - "unexpected field")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/action')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .attach('image', zeroImage)
+          .attach('image', zeroImage)
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('unexpected field');
+            resolve();
+          });
+      });
+    });
+    it('[POST] bad group id ("400 Bad Request" - "invalid schema")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/action')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .field('group_id', 'badId')
+          .attach('image', zeroImage)
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+    it('[POST] bad source id ("400 Bad Request" - "invalid schema")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/action')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .field('group_id', ZERO_UUID)
+          .field('source_id', 'badId')
+          .attach('image', zeroImage)
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+    it('[POST] bad feature_check type ("400 Bad Request" - "invalid schema")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/action')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .field('feature_check', -11)
+          .attach('image', zeroImage)
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+    it('[POST] bad feature_check values ("400 Bad Request" - "invalid schema")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/action')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .field('feature_check', [-11, 'abc'])
+          .attach('image', zeroImage)
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+    it('[POST] bad new_person_threshold ("400 Bad Request" - "invalid schema")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/action')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .field('new_person_threshold', 34)
+          .attach('image', zeroImage)
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+    it('[POST] bad new_person_square_min ("400 Bad Request" - "invalid schema")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/action')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .field('new_person_square_min', 34)
+          .attach('image', zeroImage)
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+    it('[POST] bad new_person_yaw_max ("400 Bad Request" - "invalid schema")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/action')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .field('new_person_yaw_max', 34)
+          .attach('image', zeroImage)
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+    it('[POST] bad multi type ("400 Bad Request" - "invalid schema")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/person/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .field('multi', 34)
+          .attach('image', zeroImage)
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+    it('[POST] bad person_list_add ("400 Bad Request" - "invalid schema")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/action')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .field('person_list_add', 34)
+          .attach('image', zeroImage)
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+    it('[POST] bad person_list_add values ("400 Bad Request" - "invalid schema")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/action')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .field('person_list_add', ['string', 'string'])
+          .attach('image', zeroImage)
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+    it('[POST] bad person_list_search type ("400 Bad Request" - "invalid schema")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/action')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .field('person_list_search', 0)
+          .attach('image', zeroImage)
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+    it('[POST] bad person_list_search values ("400 Bad Request" - "invalid schema")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/action')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .field('person_list_search', ['string', 'string'])
+          .attach('image', zeroImage)
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+    it('[POST] bad results type ("400 Bad Request" - "invalid schema")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/action')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .field('results', 'string')
+          .attach('image', zeroImage)
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+    it('[POST] bad results value ("400 Bad Request" - "invalid schema")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/action')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .field('results', -100)
+          .attach('image', zeroImage)
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+  });
+  describe('Failed requests', function () {
+    it(`[POST] non existent group ("404 Not Found" - "source group with id '${nonExistentId}' does not exists")`, function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/action')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .field('group_id', nonExistentId)
+          // .field('source_id', nonExistentId)
+          .attach('image', zeroImage)
+          .expect(404)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal(`source group with id '${nonExistentId}' does not exists`);
+            resolve();
+          });
+      });
+    });
+    it(`[POST] non existent source ("404 Not Found" - "source with id '${nonExistentId}' does not exists")`, function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/action')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .field('group_id', ZERO_UUID)
+          .field('source_id', nonExistentId)
+          // .field('source_id', nonExistentId)
+          .attach('image', zeroImage)
+          .expect(404)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal(`source with id '${nonExistentId}' does not exists`);
+            resolve();
+          });
+      });
+    });
+    it('[POST] non existent person_list_search ("404 Not Found" - "bad person_list_search value(s)")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/action')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .field('person_list_search', nonExistentId)
+          .attach('image', zeroImage)
+          .expect(404)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal(`person list with id '${nonExistentId}' does not exists`);
+            resolve();
+          });
+      });
+    });
+    it(`[POST] non existent person_list_add ("404 Not Found" - "person list id '${nonExistentId}' does not found")`, function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/action')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .field('person_list_add', [nonExistentId])
+          .attach('image', zeroImage)
+          .expect(404)
+          .end((err, res) => {
+            if (err) return reject(err);
+            // console.log({ body: res.body });
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal(`person list with id '${nonExistentId}' does not exists`);
+            resolve();
+          });
+      });
+    });
+    it('[POST] bad file ("200 Ok" - "image format is unknown")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/action')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .attach('image', zeroImage)
+          .expect(200)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('ok');
+            expect(res.body.message).to.equal('image format is unknown');
+            resolve();
+          });
+      });
+    });
+    it('[POST] too small image ("200 Ok" - "image is too small")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/action')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .attach('image', `${__dirname}/../__mocks__/too_small.jpg`)
+          .expect(200)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('ok');
+            expect(res.body.message).to.equal('image is too small');
+            resolve();
+          });
+      });
+    });
+    it('[POST] image without faces ("200 Ok" - "no faces found")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/action')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .attach('image', `${__dirname}/../__mocks__/no_face.jpg`)
+          .expect(200)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status)
+              .to
+              .equal('ok');
+            expect(res.body.message)
+              .to
+              .equal('no faces found');
+            resolve();
+          });
+      });
+    });
+    it('[POST] image with too small faces ("200 Ok" - "6 faces detected, but they are too small")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/action')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .attach('image', `${__dirname}/../__mocks__/6_small_faces.jpg`)
+          .expect(200)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status)
+              .to
+              .equal('ok');
+            expect(res.body.message)
+              .to
+              .equal('6 faces detected, but they are too small');
+            resolve();
+          });
+      });
+    });
+  });
+  describe('Successful requests', function () {
+    it('[POST] 1 face on image ("200 Ok" - "1 face(s) successfully processed")', function () {
+      return nextStep((resolve, reject) => {
+        req
+          .post('/action')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          // .field('token', '98ace0d0-94a6-11ea-abc1-d1365b6aa8d4')
+          .attach('image', `${__dirname}/../__mocks__/1_face.jpg`)
+          .expect(200)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('ok');
+            expect(res.body.message).to.equal('1 face(s) successfully processed');
+            resolve();
+          });
+      });
+    });
+    it('[POST] 6 faces on image, 5 accepted, 1 are too small ("200 Ok" - "5 face(s) successfully processed")', function () {
+      return nextStep((resolve, reject) => {
+        req
+          .post('/action')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .field('group_id', tempSourceGroupId)
+          .field('source_id', tempSourceId)
+          .field('multi', true)
+          .attach('image', `${__dirname}/../__mocks__/6_faces_1_small.jpg`)
+          .expect(200)
+          .end((err, res) => {
+            if (err) return reject(err);
+            // console.log({ body: JSON.stringify(res.body) });
+            expect(res.body.status).to.equal('ok');
+            expect(res.body.message).to.equal('5 face(s) successfully processed');
+            resolve();
+          });
+      });
+    });
+    it('[POST] 2 faces on image [multi: false] ("200 Ok" - "1 face(s) successfully processed")', function () {
+      return nextStep((resolve, reject) => {
+        req
+          .post('/action')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .field('multi', false)
+          .attach('image', `${__dirname}/../__mocks__/2_faces.jpg`)
+          .expect(200)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('ok');
+            expect(res.body.message).to.equal('1 face(s) successfully processed');
+            resolve();
+          });
+      });
+    });
+    it(`[POST] 2 faces [person_list_search: ${ZERO_UUID}] ("200 Ok" - "2 face(s) successfully processed")`, function () {
+      return nextStep((resolve, reject) => {
+        req
+          .post('/action')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .field('multi', true)
+          .field('person_list_search', [
+            ZERO_UUID,
+          ])
+          .attach('image', `${__dirname}/../__mocks__/2_faces.jpg`)
+          .expect(200)
+          .end((err, res) => {
+            if (err) return reject(err);
+            // console.log({ body: res.body, results: res.body.results, matches1: res.body.results[0].matches, matches2: res.body.results[1].matches });
+            expect(res.body.status).to.equal('ok');
+            expect(res.body.message).to.equal('2 face(s) successfully processed');
+            resolve();
+          });
+      });
+    });
+    it('[POST] 1 face on image, with exact group & source ("200 Ok" - "1 face(s) successfully processed")', function () {
+      return nextStep((resolve, reject) => {
+        req
+          .post('/action')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .field('group_id', ZERO_UUID)
+          .field('source_id', ZERO_UUID)
+          .field('multi', false)
+          .attach('image', `${__dirname}/../__mocks__/1_face.jpg`)
+          .expect(200)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('ok');
+            expect(res.body.message).to.equal('1 face(s) successfully processed');
+            resolve();
+          });
+      });
+    });
+    it('[POST] 1 face on image, with features ("200 Ok" - "1 face(s) successfully processed")', function () {
+      return nextStep((resolve, reject) => {
+        req
+          .post('/action')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          // .field('feature_check', ['age'])
+          .field('multi', false)
+          .attach('image', `${__dirname}/../__mocks__/1_face.jpg`)
+          .expect(200)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('ok');
+            expect(res.body.message).to.equal('1 face(s) successfully processed');
+            resolve();
+          });
+      });
+    });
+    it(`[POST] 2 faces on image [multi: false, person_list_add: ${tempPersonListId}] ("200 Ok" - "1 face(s) successfully processed")`, function () {
+      return nextStep((resolve, reject) => {
+        req
+          .post('/action')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .field('group_id', tempSourceGroupId)
+          .field('source_id', tempSourceId)
+          .field('person_list_add', tempPersonListId)
+          .attach('image', `${__dirname}/../__mocks__/2_faces.jpg`)
+          .expect(200)
+          .end((err, res) => {
+            if (err) return reject(err);
+            // console.log({
+            //   body: res.body,
+            //   results: res.body.results,
+            //   matches1: res.body.results[0].matches,
+            //   matches1_bbox: res.body.results[0].bbox,
+            // });
+            expect(res.body.status).to.equal('ok');
+            expect(res.body.message).to.equal('1 face(s) successfully processed');
+            resolve();
+          });
+      });
+    });
+    it(`[POST] 2 faces on image [multi: false, person_list_add: ${tempPersonListId}] ("200 Ok" - "1 face(s) successfully processed")`, function () {
+      return nextStep((resolve, reject) => {
+        req
+          .post('/action')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .field('group_id', tempSourceGroupId)
+          .field('source_id', tempSourceId)
+          .field('person_list_add', tempPersonListId)
+          .attach('image', `${__dirname}/../__mocks__/2_faces.jpg`)
+          .expect(200)
+          .end((err, res) => {
+            if (err) return reject(err);
+            // console.log({
+            //   body: res.body,
+            //   results: res.body.results,
+            //   matches1: res.body.results[0].matches,
+            // });
+            expect(res.body.status).to.equal('ok');
+            expect(res.body.message).to.equal('1 face(s) successfully processed');
+            resolve();
+          });
+      });
+    });
+    it(`[POST] 2 faces [multi: true, person_list_search: ${tempPersonListId}] ("200 Ok" - "2 face(s) successfully processed")`, function () {
+      return nextStep((resolve, reject) => {
+        req
+          .post('/action')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .field('multi', true)
+          .field('person_list_search', tempPersonListId)
+          .attach('image', `${__dirname}/../__mocks__/2_faces.jpg`)
+          .expect(200)
+          .end((err, res) => {
+            if (err) return reject(err);
+            // console.log({
+            //   body: res.body,
+            //   results: res.body.results,
+            //   matches1: res.body.results[0].matches,
+            //   matches2: res.body.results[1].matches,
+            // });
+            expect(res.body.status).to.equal('ok');
+            expect(res.body.message).to.equal('2 face(s) successfully processed');
+            resolve();
+          });
+      });
+    });
+  });
+  describe('Temporary mocks delete', function () {
+    it(`[DELETE] delete temporary source group '${tempSourceGroupId}' ("200 Ok" - "1 group(s) deleted")`, function () {
+      return nextStep((resolve, reject) => {
+        req
+          .delete('/source/group/delete')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ group_id: tempSourceGroupId })
+          .expect(200)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('ok');
+            expect(res.body.message).to.equal('1 group(s) deleted');
+            resolve();
+          });
+      });
+    });
+    it(`[DELETE] delete temporary person list ("200 Ok" - 'list ${tempPersonListId} deleted')`, function () {
+      return new Promise((resolve, reject) => {
+        req
+          .delete('/person/list/delete')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ list_id: tempPersonListId })
+          .expect(200)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('ok');
+            expect(res.body.message).to.equal(`list ${tempPersonListId} deleted`);
+            resolve();
+          });
+      });
+    });
+  });
+});

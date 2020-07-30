@@ -1,0 +1,416 @@
+import 'dotenv/config.js';
+import request from 'supertest';
+import faker from 'faker';
+import chai, { expect } from 'chai';
+import chaiuuid from 'chai-uuid';
+import { INITIAL_USER_LOGIN, INITIAL_USER_PASSWORD } from '../../common/constants.js';
+
+chai.use(chaiuuid);
+const req = request(process.env.TEST_API_URL);
+let xToken;
+const nonExistentId = '13814001-1dd2-11b2-b619-5502c27ed19a';
+const created = [];
+let initialCount = 0;
+
+describe('Token tests', function () {
+  this.timeout(10000000);
+  before(function () {
+    return new Promise((resolve, reject) => {
+      req
+        .post('/user/login')
+        .set('Accept', 'application/json')
+        .send({ email: INITIAL_USER_LOGIN })
+        .send({ password: INITIAL_USER_PASSWORD })
+        .expect(200)
+        .end((err, res) => {
+          if (err) return reject(err);
+          expect(res.body.token).to.be.a('string');
+          xToken = res.body.token;
+          resolve();
+        });
+    });
+  });
+  describe('Get current user tokens', function () {
+    it('[GET] get all tokens ("200 Ok")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .get('/tokens')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .expect(200)
+          .expect('Content-Type', /json/)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.tokens).to.be.an('array');
+            // console.log({ body: res.body });
+            // console.log({ tokens: res.body.tokens });
+            initialCount = res.body.tokens.length;
+            resolve();
+          });
+      });
+    });
+  });
+  describe('TokenCreate schema sanity checks', function () {
+    it('[POST] create with bad valid_days type ("400 Bad Request" - "invalid schema")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/token/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ valid_days: 'abc' })
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+    it('[POST] create with bad valid_days value ("400 Bad Request" - "invalid schema")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/token/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ valid_days: -1 })
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+    it('[POST] create with bad expires type ("400 Bad Request" - "invalid schema")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/token/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ expires: 0 })
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+    it('[POST] create with bad expires value ("400 Bad Request" - "invalid schema")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/token/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ expires: faker.random.alphaNumeric(10) })
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+  });
+  describe('Token create', function () {
+    it('[POST] create without variables ("201 Created")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/token/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .expect(201)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('ok');
+            expect(res.body.token).to.be.an('object');
+            expect(res.body.token.id).to.be.a.uuid('v1');
+            expect(res.body.token.expires).to.be.an('string');
+            created.push(res.body.token.id);
+            resolve();
+          });
+      });
+    });
+    it('[POST] create with valid_days ("201 Created")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/token/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ valid_days: 3 })
+          .expect(201)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('ok');
+            expect(res.body.token).to.be.an('object');
+            expect(res.body.token.id).to.be.a.uuid('v1');
+            expect(res.body.token.expires).to.be.an('string');
+            created.push(res.body.token.id);
+            resolve();
+          });
+      });
+    });
+    it('[POST] create with exact expires ("201 Created")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .post('/token/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ expires: new Date(new Date().getTime() + 10000).toISOString() })
+          .expect(201)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('ok');
+            expect(res.body.token).to.be.an('object');
+            expect(res.body.token.id).to.be.a.uuid('v1');
+            expect(res.body.token.expires).to.be.an('string');
+            // console.log(res.body);
+            // console.log({ tokens: res.body.tokens });
+            created.push(res.body.token.id);
+            resolve();
+          });
+      });
+    });
+  });
+  describe('Token update', function () {
+    it('[PUT] update with unknown token_id ("200 Ok" - "token with this id does not found")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .put('/token/update')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ token_id: nonExistentId })
+          .send({ expires: new Date(new Date().getTime() + 10000).toISOString() })
+          .expect(200)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('token with this id does not found');
+            resolve();
+          });
+      });
+    });
+    it('[PUT] update with valid_days ("200 Ok")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .put('/token/update')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ token_id: created[0] })
+          .send({ valid_days: 5 })
+          .expect(200)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('ok');
+            expect(res.body.token).to.be.an('object');
+            expect(res.body.token.id).to.be.a.uuid('v1');
+            expect(res.body.token.expires).to.be.an('string');
+            resolve();
+          });
+      });
+    });
+    it('[PUT] update with exact expires ("200 Ok")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .put('/token/update')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ token_id: created[0] })
+          .send({ expires: new Date(new Date().getTime() + 10000).toISOString() })
+          .expect(200)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('ok');
+            expect(res.body.token).to.be.an('object');
+            expect(res.body.token.id).to.be.a.uuid('v1');
+            expect(res.body.token.expires).to.be.an('string');
+            resolve();
+          });
+      });
+    });
+    it('[PUT] update with never expires ("200 Ok")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .put('/token/update')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ token_id: created[0] })
+          .send({ expires: 'never' })
+          .expect(200)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('ok');
+            expect(res.body.token).to.be.an('object');
+            expect(res.body.token.id).to.be.a.uuid('v1');
+            expect(res.body.token.expires).to.be.equal('never');
+            resolve();
+          });
+      });
+    });
+    it('[GET] get all tokens and check result ("200 Ok")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .get('/tokens')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .expect(200)
+          .expect('Content-Type', /json/)
+          .end((err, res) => {
+            if (err) return reject(err);
+            const newItem = res.body.tokens.find(item => item.id === created[0]);
+            expect(newItem.expires).to.be.equal('never');
+            resolve();
+          });
+      });
+    });
+  });
+  describe('TokenDelete schema sanity checks', function () {
+    it('[DELETE] delete without token_id ("400 Bad Request" - "invalid schema")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .delete('/token/delete')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+    it('[DELETE] delete with wrong token_id type ("400 Bad Request" - "invalid schema")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .delete('/token/delete')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ token_id: 0 })
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+    it('[DELETE] delete with token_id not uuid ("400 Bad Request" - "invalid schema")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .delete('/token/delete')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ token_id: 'bad_id' })
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+    it('[DELETE] delete with empty token_id ("400 Bad Request" - "invalid schema")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .delete('/token/delete')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ token_id: '' })
+          .expect(400)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('invalid schema');
+            resolve();
+          });
+      });
+    });
+  });
+  describe('Token delete', function () {
+    it('[DELETE] delete with non existent token_id ("200 Ok" - "token with this id does not found")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .delete('/token/delete')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ token_id: nonExistentId })
+          .expect(200)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('error');
+            expect(res.body.message).to.equal('token with this id does not found');
+            resolve();
+          });
+      });
+    });
+    it('[DELETE] delete first created by token_id ("200 Ok")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .delete('/token/delete')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ token_id: created.pop() })
+          .expect(200)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('ok');
+            resolve();
+          });
+      });
+    });
+    it('[DELETE] delete second created by token_id ("200 Ok")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .delete('/token/delete')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ token_id: created.pop() })
+          .expect(200)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('ok');
+            resolve();
+          });
+      });
+    });
+    it('[DELETE] delete third created by token_id ("200 Ok")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .delete('/token/delete')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ token_id: created.pop() })
+          .expect(200)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.status).to.equal('ok');
+            resolve();
+          });
+      });
+    });
+  });
+  describe('Get count after all', function () {
+    it('[GET] get all tokens list and match values ("200 Ok")', function () {
+      return new Promise((resolve, reject) => {
+        req
+          .get('/tokens')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .expect(200)
+          .expect('Content-Type', /json/)
+          .end((err, res) => {
+            if (err) return reject(err);
+            expect(res.body.tokens.length).to.be.equal(initialCount);
+            resolve();
+          });
+      });
+    });
+  });
+});

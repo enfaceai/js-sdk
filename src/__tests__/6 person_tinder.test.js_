@@ -1,0 +1,551 @@
+import 'dotenv/config.js';
+import request from 'supertest';
+import chai, { expect } from 'chai';
+import chaiuuid from 'chai-uuid';
+import chaimatch from 'chai-match';
+import { ZERO_UUID } from '../../models/constants.js';
+import { INITIAL_USER_LOGIN, INITIAL_USER_PASSWORD } from '../../common/constants.js';
+import { nextStep } from '../../common/helpers.js';
+import { counter as counterHandler } from '../../handlers';
+import { models } from '../../models';
+import { personResultSchema, personSchema } from './schema/index.js';
+import { IMQP } from '../../common/amqp';
+import { QUEUE_COMPARE, QUEUE_HNSW } from '../../common/constants';
+
+chai.use(chaimatch);
+chai.use(chaiuuid);
+const req = request(process.env.TEST_API_URL);
+const nonExistentId = '13814001-1dd2-11b2-b619-5502c27ed19a';
+const useruuid = models.timeuuidFromString(ZERO_UUID);
+const created = {};
+const hnsw = 'True';
+const fieldsUpdate = ['field1', 'field2'];
+let counter,
+  xToken,
+  tempPersonListId = '4355bd50-8fb0-11ea-a208-ef0743b28888';
+  // tempPersonListId = '558a8fc0-949a-11ea-a3c6-f2dc57a838ad';
+
+const processResults = results => {
+  results.forEach(item => {
+    item.forEach(result => {
+      // console.log({ result });
+      const schemaError = personResultSchema.validate(result);
+      // console.log({ schemaError });
+      expect(schemaError).to.be.an('undefined');
+      created[result.list_id] || (created[result.list_id] = []);
+      created[result.list_id].push(result.person_id);
+    });
+  });
+  // console.log({ created });
+};
+
+describe('Person operations', function () {
+  this.timeout(10000000);
+  before(function () {
+    return new Promise((resolve, reject) => {
+      req
+        .post('/user/login')
+        .set('Accept', 'application/json')
+        .send({ email: INITIAL_USER_LOGIN })
+        .send({ password: INITIAL_USER_PASSWORD })
+        .expect(200)
+        .end((err, res) => {
+          if (err) return reject(err);
+          expect(res.body.token).to.be.a('string');
+          xToken = res.body.token;
+          resolve();
+        });
+    });
+  });
+  describe('Person create', function () {
+    before(async function () {
+      const listuuid = models.timeuuidFromString(tempPersonListId);
+      // console.log('CURRENT COUNTER', { useruuid, listuuid });
+      counter = await counterHandler({
+        prefix: 'PersonByList',
+        useruuid,
+        listuuid,
+        frequency: 'total',
+        group : { listuuid  },
+      });
+      counter = counter.counter[0].value;
+      // console.log('CURRENT COUNTER', { counter:this.counter });
+    });
+    it('[POST] 1 face on image with acceptable params [new_person_square_min: default, new_person_yaw_max: default] ("201 Created" - "1 face(s) successfully processed")', function () {
+      return nextStep((resolve, reject) => {
+        req
+          .post('/person/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .field('list_id', tempPersonListId)
+          .field('hnsw', hnsw)
+          .attach('image', `${__dirname}/../__mocks__/1_face.jpg`)
+          // .attach('image', 'C:/_dev/_enface.io/api.enface.io_v2/_assets/test_images/10.jpg')
+          // .expect(201)
+          .end((err, res) => {
+            if (err) return reject(err);
+            console.log({ body: JSON.stringify(res.body) });
+            expect(res.body.status).to.equal('ok');
+            expect(res.body.message).to.equal('1 face(s) successfully processed');
+            expect(res.body.faces_total).to.equal(1);
+            expect(res.body.persons_updated).to.have.length(0);
+            expect(res.body.persons_new).to.have.length(1);
+            expect(res.body.matches).to.have.length(0);
+            processResults(res.body.persons_new);
+            resolve();
+          });
+      });
+    });
+    // it('[POST] 1 duplicate face on image [new_person_square_min: default, new_person_yaw_max: default] ("200 Ok" - "1 face(s) successfully processed")', function () {
+    //   return nextStep((resolve, reject) => {
+    //     req
+    //       .post('/person/create')
+    //       .set('Accept', 'application/json')
+    //       .set('token', xToken)
+    //       .field('list_id', tempPersonListId)
+    //       .field('hnsw', hnsw)
+    //       .attach('image', `${__dirname}/../__mocks__/1_face.jpg`)
+    //       // .expect(200)
+    //       .end((err, res) => {
+    //         if (err) return reject(err);
+    //         console.log({ body: JSON.stringify(res.body) });
+    //         expect(res.body.status).to.equal('ok');
+    //         expect(res.body.message).to.equal('1 face(s) successfully processed');
+    //         expect(res.body.faces_total).to.equal(1);
+    //         expect(res.body.persons_updated).to.have.length(1);
+    //         expect(res.body.persons_new).to.have.length(0);
+    //         expect(res.body.matches).to.have.length(1);
+    //         processResults(res.body.persons_new);
+    //         resolve();
+    //       });
+    //   });
+    // });
+    it('[POST] with 2 faces on image [new_person_square_min: default, new_person_yaw_max: default, multi: default] ("201 Created" - "1 face(s) successfully processed")', function () {
+      return nextStep((resolve, reject) => {
+        req
+          .post('/person/create')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .field('list_id', tempPersonListId)
+          .field('hnsw', hnsw)
+          .attach('image', `${__dirname}/../__mocks__/2_faces.jpg`)
+          // .expect(201)
+          .end((err, res) => {
+            if (err) return reject(err);
+            console.log({ body: JSON.stringify(res.body) });
+            expect(res.body.status).to.equal('ok');
+            expect(res.body.message).to.equal('1 face(s) successfully processed');
+            expect(res.body.faces_total).to.equal(2);
+            expect(res.body.persons_updated).to.have.length(0);
+            expect(res.body.persons_new).to.have.length(1);
+            expect(res.body.matches).to.have.length(0);
+            processResults(res.body.persons_new);
+            resolve();
+          });
+      });
+    });
+    // it('[POST] with 2 faces on image [new_person_square_min: 50, new_person_yaw_max: 80, multi: true] ("201 Created" - "2 face(s) successfully processed")', function () {
+    //   return nextStep((resolve, reject) => {
+    //     req
+    //       .post('/person/create')
+    //       .set('Accept', 'application/json')
+    //       .set('token', xToken)
+    //       .field('list_id', tempPersonListId)
+    //       .field('multi', true)
+    //       .field('new_person_square_min', '50')
+    //       .field('new_person_yaw_max', '80')
+    //       .field('hnsw', hnsw)
+    //       .attach('image', `${__dirname}/../__mocks__/2_faces.jpg`)
+    //       .expect(201)
+    //       .end((err, res) => {
+    //         if (err) return reject(err);
+    //         console.log({ body: JSON.stringify(res.body) });
+    //         expect(res.body.status).to.equal('ok');
+    //         expect(res.body.message).to.equal('2 face(s) successfully processed');
+    //         expect(res.body.persons_updated).to.have.length(1);
+    //         expect(res.body.persons_new).to.have.length(1);
+    //         expect(res.body.faces_total).to.equal(2);
+    //         expect(res.body.matches).to.have.length(1);
+    //         processResults(res.body.persons_new);
+    //         resolve();
+    //       });
+    //   });
+    // });
+    // it('[POST] with 1 faces on image (size < 112) [w:45, h:54, yaw:-6, new_person_square_min: 112, new_person_yaw_max: 80] ("200 Ok" - "1 face(s) successfully processed")', function () {
+    //   return nextStep((resolve, reject) => {
+    //     req
+    //       .post('/person/create')
+    //       .set('Accept', 'application/json')
+    //       .set('token', xToken)
+    //       .field('list_id', tempPersonListId)
+    //       .field('multi', true)
+    //       .field('new_person_square_min', '112')
+    //       .field('new_person_yaw_max', '80')
+    //       .field('hnsw', hnsw)
+    //       .attach('image', `${__dirname}/../__mocks__/1_face_w45_h54_yaw-6_pitch-11.jpg`)
+    //       .expect(200)
+    //       .end((err, res) => {
+    //         if (err) return reject(err);
+    //         console.log({ body: JSON.stringify(res.body) });
+    //         expect(res.body.status).to.equal('ok');
+    //         expect(res.body.message).to.equal('1 face(s) successfully processed');
+    //         expect(res.body.faces_total).to.equal(1);
+    //         expect(res.body.persons_updated).to.have.length(0);
+    //         expect(res.body.persons_new).to.have.length(0);
+    //         expect(res.body.matches).to.have.length(0);
+    //         processResults(res.body.persons_new);
+    //         resolve();
+    //       });
+    //   });
+    // });
+    // it('[POST] with 1 faces on image (yaw > 5) [w:45, h:54, yaw:-6, new_person_square_min: 50, new_person_yaw_max: 5] ("200 Ok" - "1 face(s) successfully processed")', function () {
+    //   return nextStep((resolve, reject) => {
+    //     req
+    //       .post('/person/create')
+    //       .set('Accept', 'application/json')
+    //       .set('token', xToken)
+    //       .field('list_id', tempPersonListId)
+    //       .field('multi', true)
+    //       .field('new_person_square_min', 50)
+    //       .field('new_person_yaw_max', 5)
+    //       .field('hnsw', hnsw)
+    //       .attach('image', `${__dirname}/../__mocks__/1_face_w45_h54_yaw-6_pitch-11.jpg`)
+    //       .expect(200)
+    //       .end((err, res) => {
+    //         if (err) return reject(err);
+    //         console.log({ body: JSON.stringify(res.body) });
+    //         expect(res.body.status).to.equal('ok');
+    //         expect(res.body.message).to.equal('1 face(s) successfully processed');
+    //         expect(res.body.faces_total).to.equal(1);
+    //         expect(res.body.persons_updated).to.have.length(0);
+    //         expect(res.body.persons_new).to.have.length(0);
+    //         expect(res.body.matches).to.have.length(0);
+    //         processResults(res.body.persons_new);
+    //         resolve();
+    //       });
+    //   });
+    // });
+    // it('[POST] with 1 faces on image [w:45, h:54, yaw:-6, new_person_square_min: 50, new_person_yaw_max: 30] ("201 Created" - "1 face(s) successfully processed")', function () {
+    //   return nextStep((resolve, reject) => {
+    //     req
+    //       .post('/person/create')
+    //       .set('Accept', 'application/json')
+    //       .set('token', xToken)
+    //       .field('list_id', tempPersonListId)
+    //       .field('multi', true)
+    //       .field('new_person_square_min', '50')
+    //       .field('new_person_yaw_max', '30')
+    //       .field('hnsw', hnsw)
+    //       .attach('image', `${__dirname}/../__mocks__/1_face_w45_h54_yaw-6_pitch-11.jpg`)
+    //       .expect(201)
+    //       .end((err, res) => {
+    //         if (err) return reject(err);
+    //         console.log({ body: JSON.stringify(res.body) });
+    //         expect(res.body.status).to.equal('ok');
+    //         expect(res.body.message).to.equal('1 face(s) successfully processed');
+    //         expect(res.body.faces_total).to.equal(1);
+    //         expect(res.body.persons_updated).to.have.length(0);
+    //         expect(res.body.persons_new).to.have.length(1);
+    //         expect(res.body.matches).to.have.length(0);
+    //         processResults(res.body.persons_new);
+    //         resolve();
+    //       });
+    //   });
+    // });
+    // it('[POST] with 6 faces on image (6 small) [new_person_square_min: default, new_person_yaw_max: default, multi: true] ("201 Ok" - "5 face(s) successfully processed")', function () {
+    //   return nextStep((resolve, reject) => {
+    //     req
+    //       .post('/person/create')
+    //       .set('Accept', 'application/json')
+    //       .set('token', xToken)
+    //       .field('list_id', tempPersonListId)
+    //       .field('multi', true)
+    //       .field('hnsw', hnsw)
+    //       .attach('image', `${__dirname}/../__mocks__/6_faces_1_small.jpg`)
+    //       .expect(200)
+    //       .end((err, res) => {
+    //         if (err) return reject(err);
+    //         console.log({ body: JSON.stringify(res.body) });
+    //         expect(res.body.status).to.equal('ok');
+    //         expect(res.body.message).to.equal('5 face(s) successfully processed');
+    //         expect(res.body.persons_updated).to.have.length(0);
+    //         expect(res.body.persons_new).to.have.length(0);
+    //         expect(res.body.faces_total).to.equal(6);
+    //         expect(res.body.matches).to.have.length(1);
+    //         processResults(res.body.persons_new);
+    //         resolve();
+    //       });
+    //   });
+    // });
+    // it('[POST] with 6 faces on image (1 excluded, 4 bad yaw) [new_person_square_min: 50, new_person_yaw_max: 20, multi: true] ("200 Ok" - "5 face(s) successfully processed")', function () {
+    //   return nextStep((resolve, reject) => {
+    //     req
+    //       .post('/person/create')
+    //       .set('Accept', 'application/json')
+    //       .set('token', xToken)
+    //       .field('list_id', tempPersonListId)
+    //       .field('multi', true)
+    //       .field('new_person_square_min', 50)
+    //       .field('new_person_yaw_max', 5)
+    //       .field('hnsw', hnsw)
+    //       .attach('image', `${__dirname}/../__mocks__/6_faces_1_small.jpg`)
+    //       .expect(201)
+    //       .end((err, res) => {
+    //         if (err) return reject(err);
+    //         console.log({ body: JSON.stringify(res.body) });
+    //         expect(res.body.status).to.equal('ok');
+    //         expect(res.body.message).to.equal('5 face(s) successfully processed');
+    //         expect(res.body.persons_updated).to.have.length(1);
+    //         expect(res.body.persons_new).to.have.length(2);
+    //         expect(res.body.faces_total).to.equal(6);
+    //         expect(res.body.matches).to.have.length(1);
+    //         processResults(res.body.persons_new);
+    //         resolve();
+    //       });
+    //   });
+    // });
+    // it('[POST] with 6 faces on image (1 excluded, 1 bad yaw) [new_person_square_min: 50, new_person_yaw_max: 50, multi: true] ("201 Created" - "5 face(s) successfully processed")', function () {
+    //   return nextStep((resolve, reject) => {
+    //     req
+    //       .post('/person/create')
+    //       .set('Accept', 'application/json')
+    //       .set('token', xToken)
+    //       .field('list_id', tempPersonListId)
+    //       .field('multi', true)
+    //       .field('new_person_square_min', 50)
+    //       .field('new_person_yaw_max', 80)
+    //       .field('hnsw', hnsw)
+    //       .attach('image', `${__dirname}/../__mocks__/6_faces_1_small.jpg`)
+    //       .expect(201)
+    //       .end((err, res) => {
+    //         if (err) return reject(err);
+    //         console.log({ body: JSON.stringify(res.body) });
+    //         expect(res.body.status).to.equal('ok');
+    //         expect(res.body.message).to.equal('5 face(s) successfully processed');
+    //         expect(res.body.persons_updated).to.have.length(3);
+    //         expect(res.body.persons_new).to.have.length(2);
+    //         expect(res.body.faces_total).to.equal(6);
+    //         expect(res.body.matches).to.have.length(3);
+    //         processResults(res.body.persons_new);
+    //         resolve();
+    //       });
+    //   });
+    // });
+    // it('[POST] with 6 faces on image (1 excluded, 5 bad yaw) [new_person_square_min: 50, new_person_yaw_max: 5, multi: true] ("200 Ok" - "5 face(s) successfully processed")', function () {
+    //   return nextStep((resolve, reject) => {
+    //     req
+    //       .post('/person/create')
+    //       .set('Accept', 'application/json')
+    //       .set('token', xToken)
+    //       .field('list_id', tempPersonListId)
+    //       .field('multi', true)
+    //       .field('new_person_square_min', 50)
+    //       .field('new_person_yaw_max', 5)
+    //       .field('hnsw', hnsw)
+    //       .attach('image', `${__dirname}/../__mocks__/6_faces_1_small.jpg`)
+    //       .expect(200)
+    //       .end((err, res) => {
+    //         if (err) return reject(err);
+    //         console.log({ body: JSON.stringify(res.body) });
+    //         expect(res.body.status).to.equal('ok');
+    //         expect(res.body.message).to.equal('5 face(s) successfully processed');
+    //         expect(res.body.persons_updated).to.have.length(3);
+    //         expect(res.body.persons_new).to.have.length(0);
+    //         expect(res.body.faces_total).to.equal(6);
+    //         expect(res.body.matches).to.have.length(5);
+    //         processResults(res.body.persons_new);
+    //         resolve();
+    //       });
+    //   });
+    // });
+    // it('[POST] replace 1 faces ("200 Ok" - "1 face(s) successfully processed")', function () {
+    //   return nextStep((resolve, reject) => {
+    //     req
+    //       .post('/person/create')
+    //       .set('Accept', 'application/json')
+    //       .set('token', xToken)
+    //       .field('list_id', tempPersonListId)
+    //       .field('multi', true)
+    //       .field('new_person_square_min', '50')
+    //       .field('new_person_yaw_max', '40')
+    //       .field('hnsw', hnsw)
+    //       .attach('image', `${__dirname}/../__mocks__/1_face_w45_h54_yaw-6_pitch-11.jpg`)
+    //       .expect(200)
+    //       .end((err, res) => {
+    //         if (err) return reject(err);
+    //         console.log({ body: JSON.stringify(res.body) });
+    //         expect(res.body.status).to.equal('ok');
+    //         expect(res.body.message).to.equal('1 face(s) successfully processed');
+    //         expect(res.body.persons_updated).to.have.length(1);
+    //         expect(res.body.persons_new).to.have.length(0);
+    //         expect(res.body.faces_total).to.equal(1);
+    //         expect(res.body.matches).to.have.length(1);
+    //         processResults(res.body.persons_new);
+    //         // console.log({ created });
+    //         resolve();
+    //       });
+    //   });
+    // });
+  });
+  // describe('Get single person', function () {
+  //   it(`[POST] non existent list_id ("404 Not Found" - "list id ${nonExistentId} does not found")`, function () {
+  //     return new Promise((resolve, reject) => {
+  //       req
+  //         .post('/person')
+  //         .set('Accept', 'application/json')
+  //         .set('token', xToken)
+  //         .send({ list_id: nonExistentId })
+  //         .send({ person_id: created[tempPersonListId][0] })
+  //         .expect(404)
+  //         .end((err, res) => {
+  //           // console.log({ body: JSON.stringify(res.body) });
+  //           if (err) return reject(err);
+  //           expect(res.body.status).to.equal('error');
+  //           expect(res.body.message).to.equal(`list id ${nonExistentId} does not found`);
+  //           resolve();
+  //         });
+  //     });
+  //   });
+  //   it(`[POST] non existent person_id ("404 Not Found" - "person id ${nonExistentId} does not found")`, function () {
+  //     return new Promise((resolve, reject) => {
+  //       req
+  //         .post('/person')
+  //         .set('Accept', 'application/json')
+  //         .set('token', xToken)
+  //         .send({ list_id: tempPersonListId })
+  //         .send({ person_id: nonExistentId })
+  //         .expect(404)
+  //         .end((err, res) => {
+  //           // console.log({ body: JSON.stringify(res.body) });
+  //           if (err) return reject(err);
+  //           expect(res.body.status).to.equal('error');
+  //           expect(res.body.message).to.equal(`person id ${nonExistentId} does not found`);
+  //           resolve();
+  //         });
+  //     });
+  //   });
+  //   it('[POST] person data ("200 Ok")', function () {
+  //     // console.log({ 'created[tempPersonListId]': created[tempPersonListId] });
+  //     return new Promise((resolve, reject) => {
+  //       req
+  //         .post('/person')
+  //         .set('Accept', 'application/json')
+  //         .set('token', xToken)
+  //         .send({ list_id: tempPersonListId })
+  //         .send({ person_id: created[tempPersonListId][0] })
+  //         .expect(200)
+  //         .expect('Content-Type', /json/)
+  //         .end((err, res) => {
+  //           // console.log({ body: JSON.stringify(res.body) });
+  //           if (err) return reject(err);
+  //           const schemaError = personSchema.validate(res.body);
+  //           expect(schemaError).to.be.an('undefined');
+  //           resolve();
+  //         });
+  //     });
+  //   });
+  // });
+  // describe('PersonUpdate', function () {
+  //   it('[PUT] update new_person_threshold ("200 Ok")', function () {
+  //     return new Promise((resolve, reject) => {
+  //       req
+  //         .put('/person/update')
+  //         .set('Accept', 'application/json')
+  //         .set('token', xToken)
+  //         .send({ list_id: tempPersonListId })
+  //         .send({ person_id: created[tempPersonListId][0] })
+  //         .send({ fields: fieldsUpdate })
+  //         .expect(200)
+  //         .end((err, res) => {
+  //           if (err) return reject(err);
+  //           // console.log({ body: JSON.stringify(res.body) });
+  //           expect(res.body.status).to.equal('ok');
+  //           expect(res.body.message).to.equal('operation succeeded');
+  //           resolve();
+  //         });
+  //     });
+  //   });
+  //   it('[POST] check fro changes ("200 Ok")', function () {
+  //     return new Promise((resolve, reject) => {
+  //       req
+  //         .post('/person')
+  //         .set('Accept', 'application/json')
+  //         .set('token', xToken)
+  //         .send({ list_id: tempPersonListId })
+  //         .send({ person_id: created[tempPersonListId][0] })
+  //         .expect(200)
+  //         .expect('Content-Type', /json/)
+  //         .end((err, res) => {
+  //           // console.log({ body: JSON.stringify(res.body) });
+  //           if (err) return reject(err);
+  //           const schemaError = personSchema.validate(res.body);
+  //           expect(schemaError).to.be.an('undefined');
+  //           // console.log({ 'res.body.fields': res.body.fields });
+  //           expect(res.body.fields).to.deep.equal(fieldsUpdate);
+  //           resolve();
+  //         });
+  //     });
+  //   });
+  // });
+  describe('Person delete', function () {
+    after(async function () {
+      const listuuid = models.timeuuidFromString(tempPersonListId);
+      counter = await counterHandler({
+        prefix: 'PersonByList',
+        useruuid,
+        listuuid,
+        frequency: 'total',
+        group : { listuuid  },
+      });
+      expect(counter.counter[0].value.toString()).to.be.equal('0');
+    });
+    // it('[DELETE] with non existing list_id ("200 Ok" - "list with this id does not found")', function () {
+    //   return new Promise((resolve, reject) => {
+    //     req
+    //       .delete('/person/delete')
+    //       .set('Accept', 'application/json')
+    //       .set('token', xToken)
+    //       .send({ list_id: nonExistentId })
+    //       .send({ person_id: nonExistentId })
+    //       .expect(200)
+    //       .end((err, res) => {
+    //         if (err) return reject(err);
+    //         // console.log({ body: JSON.stringify(res.body) });
+    //         expect(res.body.status).to.equal('error');
+    //         expect(res.body.message).to.equal('list with this id does not found');
+    //         resolve();
+    //       });
+    //   });
+    // });
+    it('[DELETE] all created ("200 Ok" - "X person(s) deleted")', async function () {
+      // await IMQP.init();
+      // const resultDelete = IMQP.sendRPCMessageMulti({
+      //   useruuid: '13814001-1dd2-11b2-b619-5502c27ed19c',
+      //   listuuid: tempPersonListId,
+      //   delete_persons: ['48dc3b9a-9619-11ea-9dcc-84b3700d0644'],
+      // }, hnsw ? QUEUE_HNSW : QUEUE_COMPARE);
+      // return true;
+      return nextStep((resolve, reject) => {
+        console.log('created rest', created[tempPersonListId]);
+        // if (!created[tempPersonListId]) return resolve();
+        const uniq = [...new Set(created[tempPersonListId])].length;
+        req
+          .delete('/person/delete')
+          .set('Accept', 'application/json')
+          .set('token', xToken)
+          .send({ list_id: tempPersonListId })
+          .send({ person_id: created[tempPersonListId] })
+          // .send({ person_id: 'fa9dc490-9617-11ea-96b9-f660a8631f40' })
+          .send({ hnsw: true })
+          // .expect(200)
+          .end((err, res) => {
+            if (err) return reject(err);
+            console.log({ body: JSON.stringify(res.body) });
+            expect(res.body.status).to.equal('ok');
+            expect(res.body.message).to.equal(`${uniq} person(s) deleted`);
+            resolve();
+          });
+      });
+    });
+  });
+});
